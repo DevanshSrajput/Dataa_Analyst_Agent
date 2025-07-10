@@ -5,33 +5,66 @@ Change the API key:
 Use Ctrl+f to find(DEFAULT_API_KEY = )
 '''
 
-
 import os
 import io
 import json
 import base64
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from typing import Dict, List, Any, Optional, Union
+import sys
 import warnings
+import time
+from typing import Dict, List, Any, Optional, Union
 warnings.filterwarnings('ignore')
 
-# File processing imports
-import PyPDF2
-import docx
-from PIL import Image
-import pytesseract
-import requests
-from together import Together
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    print("✅ Environment variables loaded")
+except ImportError:
+    print("⚠️  python-dotenv not found. Please install: pip install python-dotenv")
+except Exception as e:
+    print(f"⚠️  Error loading .env file: {e}")
 
-# Optional UI imports (uncomment if you want to use Streamlit)
-import streamlit as st
-import subprocess
-import sys
-import webbrowser
-from threading import Timer
+# Core data processing imports with error handling
+try:
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    print("✅ Core data libraries loaded successfully")
+except ImportError as e:
+    print(f"❌ Error importing data libraries: {e}")
+    print("\n🔧 To fix this issue, please run one of the following:")
+    print("   pip uninstall numpy pandas -y")
+    print("   pip install numpy==1.24.3")
+    print("   pip install pandas==1.5.3")
+    print("   pip install -r requirements.txt")
+    input("Press Enter to exit...")
+    sys.exit(1)
+
+from typing import Dict, List, Any, Optional, Union
+
+# File processing imports
+try:
+    import PyPDF2
+    import docx
+    from PIL import Image
+    import pytesseract
+    import requests
+    from together import Together
+except ImportError as e:
+    print(f"Error importing file processing libraries: {e}")
+    print("Please run: pip install PyPDF2 python-docx Pillow pytesseract requests together")
+    sys.exit(1)
+
+# UI imports
+try:
+    import streamlit as st
+    import subprocess
+except ImportError as e:
+    print(f"Error importing UI libraries: {e}")
+    print("Please run: pip install streamlit")
+    sys.exit(1)
 
 class DocumentAnalystAgent:
     """
@@ -42,7 +75,8 @@ class DocumentAnalystAgent:
     def __init__(self, api_key: str):
         
         self.client = Together(api_key=api_key)
-        self.model = "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
+        # Using a more accessible model with higher rate limits
+        self.model = "meta-llama/Llama-3.1-8B-Instruct-Turbo"
         self.document_content = {}
         self.data_frames = {}
         self.analysis_results = {}
@@ -145,6 +179,27 @@ class DocumentAnalystAgent:
             result['content'] = f"Error processing file: {str(e)}"
             return result
     
+    def _extract_response_content(self, response) -> str:
+        """Extract content from Together API response"""
+        try:
+            # Handle Together API response format
+            if hasattr(response, 'choices') and response.choices:
+                choice = response.choices[0]
+                if hasattr(choice, 'message') and hasattr(choice.message, 'content'):
+                    content = choice.message.content
+                    # Handle case where content is a list
+                    if isinstance(content, list):
+                        return ' '.join(str(item) for item in content)
+                    return str(content) if content else ""
+                elif hasattr(choice, 'text'):
+                    return str(choice.text)
+            
+            # Fallback to string conversion
+            return str(response)
+        except Exception as e:
+            print(f"Error extracting response content: {e}")
+            return f"Error processing response: {str(e)}"
+    
     def generate_document_summary(self, document_info: Dict[str, Any]) -> str:
         """Generate a summary of the document using the LLM"""
         try:
@@ -168,14 +223,7 @@ class DocumentAnalystAgent:
             Keep the summary concise but informative.
             """
             
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=500,
-                temperature=0.3
-            )
-            
-            return response.choices[0].message.content
+            return self._make_api_call_with_retry(prompt, max_tokens=500)
             
         except Exception as e:
             return f"Error generating summary: {str(e)}"
@@ -274,14 +322,15 @@ class DocumentAnalystAgent:
             
             # 3. Box plots for numeric columns
             if len(numeric_columns) > 0:
-                fig, axes = plt.subplots(1, min(3, len(numeric_columns)), figsize=(15, 5))
-                if len(numeric_columns) == 1:
-                    axes = [axes]
+                n_plots = min(3, len(numeric_columns))
                 
-                for i, col in enumerate(numeric_columns[:3]):
-                    if i < len(axes):
-                        df.boxplot(column=col, ax=axes[i])
-                        axes[i].set_title(f'Box Plot of {col}')
+                # Always create a figure with at least one subplot
+                fig, ax_array = plt.subplots(1, n_plots, figsize=(15, 5), squeeze=False)
+                axes = ax_array.flatten()
+                
+                for i, col in enumerate(numeric_columns[:n_plots]):
+                    df.boxplot(column=col, ax=axes[i])
+                    axes[i].set_title(f'Box Plot of {col}')
                 
                 plt.tight_layout()
                 box_path = os.path.join(output_dir, 'box_plots.png')
@@ -291,12 +340,12 @@ class DocumentAnalystAgent:
             
             # 4. Bar charts for categorical columns
             if len(categorical_columns) > 0:
-                fig, axes = plt.subplots(1, min(2, len(categorical_columns)), figsize=(15, 6))
-                if len(categorical_columns) == 1:
-                    axes = [axes]
+                n_cat_plots = min(2, len(categorical_columns))
+                fig, ax_array = plt.subplots(1, n_cat_plots, figsize=(15, 6), squeeze=False)
+                axes = ax_array.flatten()
                 
-                for i, col in enumerate(categorical_columns[:2]):
-                    if i < len(axes) and df[col].nunique() <= 20:
+                for i, col in enumerate(categorical_columns[:n_cat_plots]):
+                    if df[col].nunique() <= 20:
                         value_counts = df[col].value_counts().head(10)
                         value_counts.plot(kind='bar', ax=axes[i])
                         axes[i].set_title(f'Top Values in {col}')
@@ -370,14 +419,7 @@ class DocumentAnalystAgent:
             If you cannot answer the question based on the available information, please explain what additional information would be needed.
             """
             
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=1000,
-                temperature=0.3
-            )
-            
-            answer = response.choices[0].message.content
+            answer = self._make_api_call_with_retry(prompt, max_tokens=1000)
             
             # Store in conversation history
             self.conversation_history.append({
@@ -438,14 +480,7 @@ class DocumentAnalystAgent:
             Make the report professional and actionable.
             """
             
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": report_prompt}],
-                max_tokens=1500,
-                temperature=0.3
-            )
-            
-            return response.choices[0].message.content
+            return self._make_api_call_with_retry(report_prompt, max_tokens=1500)
             
         except Exception as e:
             return f"Error generating report: {str(e)}"
@@ -460,6 +495,35 @@ class DocumentAnalystAgent:
                 'summary': doc_info['summary'][:100] + "..." if len(doc_info['summary']) > 100 else doc_info['summary']
             }
         return info
+    
+    def _make_api_call_with_retry(self, prompt: str, max_tokens: int = 500, max_retries: int = 3) -> str:
+        """Make API call with retry logic and exponential backoff"""
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=max_tokens,
+                    temperature=0.3,
+                    stream=False
+                )
+                
+                return self._extract_response_content(response)
+                
+            except Exception as e:
+                error_str = str(e)
+                if "rate limit" in error_str.lower() or "429" in error_str:
+                    wait_time = (2 ** attempt) * 30  # Exponential backoff: 30s, 60s, 120s
+                    print(f"Rate limit hit. Waiting {wait_time} seconds before retry {attempt + 1}/{max_retries}...")
+                    time.sleep(wait_time)
+                    
+                    if attempt == max_retries - 1:
+                        return f"Rate limit exceeded. Please try again in a few minutes. Error: {error_str}"
+                else:
+                    # For non-rate-limit errors, don't retry
+                    return f"API Error: {error_str}"
+        
+        return "Maximum retries exceeded. Please try again later."
 
 # Streamlit UI - Simplified and User-Friendly
 def create_streamlit_ui():
@@ -476,12 +540,20 @@ def create_streamlit_ui():
     st.markdown("**Upload documents and ask intelligent questions about them**")
     st.markdown("---")
     
-    # Initialize agent with your API key
-    DEFAULT_API_KEY = "91cd400c4b4f60727630ca1f6b2affcf4c584fc4362a6711bd0e7b92a3e02cfd"
+    # Initialize agent with API key from environment
+    # First try to get from environment variables
+    api_key = os.getenv('TOGETHER_API_KEY')
+    
+    # Fallback to default if not found in environment
+    if not api_key:
+        api_key = "YOUR_TOGETHER_API_KEY_HERE" # Replace with your actual API key
+        st.warning("⚠️ Using hardcoded API key. For production, set TOGETHER_API_KEY in .env file")
+    else:
+        st.info("✅ Using API key from environment variables")
     
     if 'agent' not in st.session_state:
         try:
-            st.session_state.agent = DocumentAnalystAgent(DEFAULT_API_KEY)
+            st.session_state.agent = DocumentAnalystAgent(api_key)
             st.success("✅ Agent initialized and ready!")
         except Exception as e:
             st.error(f"❌ Error initializing agent: {str(e)}")
@@ -492,6 +564,60 @@ def create_streamlit_ui():
     # Sidebar for file management
     with st.sidebar:
         st.header("📁 File Manager")
+        
+        # API Key Management Section
+        with st.expander("🔑 API Key Management"):
+            current_key = os.getenv('TOGETHER_API_KEY')
+            if current_key:
+                st.success("✅ API key loaded from .env file")
+                st.text(f"Key: {current_key[:10]}...{current_key[-4:]}")
+            else:
+                st.warning("⚠️ No API key found in .env file")
+                st.info("Add TOGETHER_API_KEY to your .env file")
+            
+            # Option to temporarily override API key
+            temp_key = st.text_input(
+                "Temporary API Key Override",
+                type="password",
+                help="This will override the .env API key for this session only"
+            )
+            
+            if temp_key and st.button("Use Temporary Key"):
+                try:
+                    st.session_state.agent = DocumentAnalystAgent(temp_key)
+                    st.success("✅ Temporary API key applied!")
+                except Exception as e:
+                    st.error(f"❌ Error with temporary API key: {str(e)}")
+        
+        # Model Selection Section
+        with st.expander("🤖 Model Settings"):
+            available_models = [
+                "meta-llama/Llama-3.1-8B-Instruct-Turbo",
+                "meta-llama/Llama-3.1-70B-Instruct-Turbo",
+                "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
+                "mistralai/Mixtral-8x7B-Instruct-v0.1",
+                "NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO",
+                "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
+            ]
+            
+            selected_model = st.selectbox(
+                "Choose Model",
+                available_models,
+                index=0,
+                help="Note: Some models have stricter rate limits. Llama-3.1-8B-Instruct-Turbo is recommended for most use cases."
+            )
+            
+            if selected_model != agent.model:
+                if st.button("🔄 Update Model"):
+                    agent.model = selected_model
+                    st.success(f"✅ Model updated to: {selected_model}")
+                    st.rerun()
+            
+            # Rate limit info
+            if "Maverick" in selected_model:
+                st.warning("⚠️ This model has very strict rate limits (0.6 queries/minute)")
+            else:
+                st.info("ℹ️ This model has standard rate limits")
         
         # File upload
         uploaded_files = st.file_uploader(
@@ -518,7 +644,7 @@ def create_streamlit_ui():
             agent.analysis_results.clear()
             agent.conversation_history.clear()
             st.success("All files cleared!")
-            st.experimental_rerun()
+            st.rerun()
     
     # Main content area
     col1, col2 = st.columns([1, 1])
@@ -645,49 +771,26 @@ def create_streamlit_ui():
                             except Exception as e:
                                 st.error(f"❌ Error: {str(e)}")
 
-def check_streamlit_server(port=8501):
-    """Check if Streamlit server is running"""
-    try:
-        response = requests.get(f"http://localhost:{port}", timeout=2)
-        return response.status_code == 200
-    except:
-        return False
-
-def launch_with_browser_delay(url, delay=3):
-    """Open browser after delay"""
-    def open_browser():
-        webbrowser.open(url)
-        print(f"🌐 Opened {url} in browser")
-    
-    Timer(delay, open_browser).start()
-
 def smart_streamlit_launch():
-    """Smart Streamlit launcher with server checking"""
+    """Smart Streamlit launcher"""
     port = 8501
     url = f"http://localhost:{port}"
     
-    # Check if server is already running
-    if check_streamlit_server(port):
-        print(f"✅ Streamlit server already running at {url}")
-        webbrowser.open(url)
-        return
-    
     try:
         print("🚀 Starting Document Analyst Agent...")
+        print(f"📊 Streamlit will be available at {url}")
+        print("🌐 Please open the URL manually in your browser")
         
         script_path = os.path.abspath(__file__)
         
-        # Schedule browser opening
-        launch_with_browser_delay(url, 4)
-        
-        # Launch Streamlit
+        # Launch Streamlit without auto-opening browser
         cmd = [
             sys.executable, "-m", "streamlit", "run", script_path,
             "--server.port", str(port),
-            "--browser.gatherUsageStats", "false"
+            "--browser.gatherUsageStats", "false",
+            "--server.headless", "true"
         ]
         
-        print(f"📊 Launching Streamlit at {url}")
         print("🛑 Press Ctrl+C to stop")
         
         subprocess.run(cmd)
@@ -702,10 +805,19 @@ def smart_streamlit_launch():
 if __name__ == "__main__":
     # Detect if running in Streamlit
     try:
-        import streamlit as st
-        if hasattr(st, 'runtime') and st.runtime.exists():
+        # Check if we're running within Streamlit
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        if get_script_run_ctx() is not None:
             create_streamlit_ui()
         else:
             smart_streamlit_launch()
-    except:
-        smart_streamlit_launch()
+    except ImportError:
+        # Fallback for older Streamlit versions
+        try:
+            import streamlit as st
+            if hasattr(st, '_is_running_with_streamlit'):
+                create_streamlit_ui()
+            else:
+                smart_streamlit_launch()
+        except:
+            smart_streamlit_launch()
