@@ -1,8 +1,7 @@
 '''
-It takes a while to answer complex files,
-If my API key is not working, you can use your own API key.
-Change the API key:
-Use Ctrl+f to find(DEFAULT_API_KEY = )
+You have to use your own API key.
+Change the API key at ".env"
+If you can`t mail me at dksdevansh@gmail.com (I'll send you the key)
 '''
 
 import os

@@ -8,8 +8,6 @@
 
 Welcome to **Document Analyst Agent** – the tool you never knew you desperately needed, built by _Devansh Singh_ (yes, I made this, and yes, I'm still waiting for my Nobel Prize) meet Analyst Agent
 
-> _"Because reading your own documents is so 2022. Let the AI do the heavy lifting while you take all the credit."_
-
 This Python-powered, AI-infused, sarcasm-enabled agent will:
 
 - **Read** your PDFs, DOCX, TXT, CSV, Excel, and even images (OCR, because why not?).
@@ -37,7 +35,7 @@ All this, wrapped in a Streamlit UI so easy, even your boss could use it (but pl
 ## 🚀 Features (Because You’re Too Busy to Read the Code)
 
 - **Multi-format Support:** PDF, DOCX, TXT, CSV, XLSX, JPG, PNG, and more. If you can upload it, I’ll pretend I can read it.
-- **LLM Summaries:** Uses Meta Llama-4 via Together API. If my API key dies, just use your own (Ctrl+F for `DEFAULT_API_KEY` – you’re welcome).
+- **LLM Summaries:** Uses Meta Llama-4 via Together API. If my API key dies, just use your own (Ctrl+F for `api_key = os.getenv('TOGETHER_API_KEY')` – you’re welcome).
 - **Data Analysis:** Automatic stats, missing values, unique counts, correlations, and more. No, you don’t need a PhD.
 - **Visualizations:** Histograms, heatmaps, box plots, bar charts – all auto-generated, all Instagram-worthy.
 - **Conversational Q&A:** Ask anything about your docs. The agent remembers the last 3 things you said, which is more than most people.
@@ -75,8 +73,8 @@ All this, wrapped in a Streamlit UI so easy, even your boss could use it (but pl
 ## 🔑 API Key (Because Free Lunches Don’t Last)
 
 - Uses Together API for LLM magic.
-- Default key is included (if it stops working, blame the universe).
-- To use your own, search for [DEFAULT_API_KEY](http://_vscodecontentref_/0) in the code and replace it. Yes, you have to do it yourself.
+- Connect with me if getting your own API key is so difficult for you (I'll provide you mine-You`re Welcome)
+- To use your own, search for [api_key = os.getenv('TOGETHER_API_KEY')](http://_vscodecontentref_/0) in the code and replace it. Yes, you have to do it yourself.
 
 ## 🔑 API Key Configuration
 
@@ -206,4 +204,4 @@ Open an issue, send a PR, or just scream into the void. I might respond. Or not.
 
 ---
 
-Enjoy! (Or don’t.#
+Enjoy! (Or don’t)
