@@ -497,13 +497,25 @@ class DocumentAnalystAgent:
     
     def _make_api_call_with_retry(self, prompt: str, max_tokens: int = 500, max_retries: int = 3) -> str:
         """Make API call with retry logic and exponential backoff"""
+        # Use session settings if available
+        try:
+            import streamlit as st
+            if hasattr(st, 'session_state'):
+                max_tokens = getattr(st.session_state, 'max_tokens', max_tokens)
+                max_retries = getattr(st.session_state, 'max_retries', max_retries)
+                temperature = getattr(st.session_state, 'temperature', 0.3)
+            else:
+                temperature = 0.3
+        except:
+            temperature = 0.3
+        
         for attempt in range(max_retries):
             try:
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=max_tokens,
-                    temperature=0.3,
+                    temperature=temperature,
                     stream=False
                 )
                 
@@ -524,255 +536,854 @@ class DocumentAnalystAgent:
         
         return "Maximum retries exceeded. Please try again later."
 
-# Streamlit UI - Simplified and User-Friendly
 def create_streamlit_ui():
-    # Page configuration
+    """Create the Streamlit user interface"""
+    # Page configuration with custom styling
     st.set_page_config(
-        page_title="Document Analyst Agent",
-        page_icon="📊",
+        page_title="📊 AI Document Analyst | Smart Document Processing",
+        page_icon="🤖",
         layout="wide",
-        initial_sidebar_state="expanded"
+        initial_sidebar_state="expanded",
+        menu_items={
+            'Get Help': 'https://github.com/DevanshSrajput/Dataa_Analyst_Agent',
+            'Report a bug': "mailto:dksdevansh@gmail.com",
+            'About': "AI-powered document analysis tool by Devansh Singh"
+        }
     )
     
-    # Header
-    st.title("📊 Document Analyst Agent")
-    st.markdown("**Upload documents and ask intelligent questions about them**")
-    st.markdown("---")
+    # Custom CSS for modern styling
+    st.markdown("""
+    <style>
+    /* Main styling */
+    .main-header {
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        padding: 2rem;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
     
-    # Initialize agent with API key from environment
-    # First try to get from environment variables
+    .feature-card {
+        background: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 10px;
+        border-left: 4px solid #667eea;
+        margin: 1rem 0;
+    }
+    
+    .metric-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 1rem;
+        border-radius: 8px;
+        text-align: center;
+        margin: 0.5rem;
+    }
+    
+    .upload-zone {
+        border: 2px dashed #667eea;
+        border-radius: 10px;
+        padding: 2rem;
+        text-align: center;
+        background: #f8f9fa;
+        margin: 1rem 0;
+    }
+    
+    .chat-container {
+        background: white;
+        border-radius: 10px;
+        padding: 1rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    /* Tab styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        padding-left: 20px;
+        padding-right: 20px;
+        background-color: #f0f2f6;
+        border-radius: 10px 10px 0 0;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: #667eea;
+        color: white;
+    }
+    
+    /* Hide default streamlit styling */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Modern Header with gradient
+    st.markdown("""
+    <div class="main-header">
+        <h1>🤖 AI Document Analyst</h1>
+        <p style="font-size: 1.2em; margin: 0;">Transform your documents into actionable insights with AI</p>
+        <p style="opacity: 0.9; margin: 0.5rem 0 0 0;">Built by Devansh Singh | Powered by Meta Llama & Together AI</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Initialize agent with enhanced error handling
     api_key = os.getenv('TOGETHER_API_KEY')
     
-    # Fallback to default if not found in environment
     if not api_key:
-        api_key = "YOUR_TOGETHER_API_KEY_HERE" # Replace with your actual API key
-        st.warning("⚠️ Using hardcoded API key. For production, set TOGETHER_API_KEY in .env file")
-    else:
-        st.info("✅ Using API key from environment variables")
+        st.error("🔐 **API Key Required!** Please set your TOGETHER_API_KEY in the .env file")
+        with st.expander("🔧 How to set up API Key"):
+            st.markdown("""
+            1. Get your API key from [Together AI](https://api.together.xyz/)
+            2. Create a `.env` file in your project directory
+            3. Add: `TOGETHER_API_KEY=your_api_key_here`
+            4. Restart the application
+            """)
+        return
     
     if 'agent' not in st.session_state:
-        try:
-            st.session_state.agent = DocumentAnalystAgent(api_key)
-            st.success("✅ Agent initialized and ready!")
-        except Exception as e:
-            st.error(f"❌ Error initializing agent: {str(e)}")
-            return
+        with st.spinner("🚀 Initializing AI Agent..."):
+            try:
+                st.session_state.agent = DocumentAnalystAgent(api_key)
+                st.success("✅ AI Agent ready for action!")
+            except Exception as e:
+                st.error(f"❌ Failed to initialize agent: {str(e)}")
+                return
     
     agent = st.session_state.agent
     
     # Sidebar for file management
     with st.sidebar:
-        st.header("📁 File Manager")
+        st.markdown("### 🛠️ Control Panel")
         
-        # API Key Management Section
-        with st.expander("🔑 API Key Management"):
+        # Quick stats if files are processed
+        if agent.document_content:
+            st.markdown("### � Quick Stats")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("📄 Files", len(agent.document_content))
+            with col2:
+                st.metric("📊 Datasets", len(agent.data_frames))
+        
+        # API Key Management
+        with st.expander("🔑 API Configuration"):
             current_key = os.getenv('TOGETHER_API_KEY')
             if current_key:
-                st.success("✅ API key loaded from .env file")
-                st.text(f"Key: {current_key[:10]}...{current_key[-4:]}")
+                st.success("✅ API key loaded")
+                st.text(f"Key: {current_key[:8]}...")
             else:
-                st.warning("⚠️ No API key found in .env file")
-                st.info("Add TOGETHER_API_KEY to your .env file")
-            
-            # Option to temporarily override API key
-            temp_key = st.text_input(
-                "Temporary API Key Override",
-                type="password",
-                help="This will override the .env API key for this session only"
-            )
-            
-            if temp_key and st.button("Use Temporary Key"):
-                try:
-                    st.session_state.agent = DocumentAnalystAgent(temp_key)
-                    st.success("✅ Temporary API key applied!")
-                except Exception as e:
-                    st.error(f"❌ Error with temporary API key: {str(e)}")
+                st.warning("⚠️ No API key found")
         
-        # Model Selection Section
-        with st.expander("🤖 Model Settings"):
-            available_models = [
-                "meta-llama/Llama-3.1-8B-Instruct-Turbo",
-                "meta-llama/Llama-3.1-70B-Instruct-Turbo",
-                "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
-                "mistralai/Mixtral-8x7B-Instruct-v0.1",
-                "NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO",
-                "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
+        # File upload section (now moved to main tab)
+        st.markdown("### 🧭 Quick Navigation")
+        st.markdown("""
+        - **🏠 Home**: Overview & features
+        - **📤 Upload**: Upload documents here ⬅️
+        - **💬 Chat**: Ask questions about your files
+        - **📊 Analytics**: View data insights
+        - **⚙️ Settings**: Configure app settings
+        """)
+        
+        # Processed files display
+        if agent.document_content:
+            st.markdown("### 📋 Processed Files")
+            for file_name in agent.document_content.keys():
+                file_type = agent.document_content[file_name]['file_type']
+                icon = "📊" if file_type in ['csv', 'xlsx', 'xls'] else "📄"
+                st.text(f"{icon} {file_name}")
+        
+        # Help section
+        with st.expander("❓ Need Help?"):
+            st.markdown("""
+            **🚀 Getting Started:**
+            1. Go to **📤 Upload & Process** tab
+            2. Upload your documents there
+            3. Wait for AI processing
+            4. Chat with your documents!
+            
+            **📧 Support:** dksdevansh@gmail.com
+            """)
+        
+        # Clear button
+        if agent.document_content:
+            if st.button("🗑️ Clear All Files", type="secondary", use_container_width=True):
+                agent.document_content.clear()
+                agent.data_frames.clear()
+                agent.analysis_results.clear()
+                agent.conversation_history.clear()
+                st.success("✨ All files cleared!")
+                st.rerun()
+        
+        # App info
+        st.markdown("---")
+        st.markdown("**🤖 AI Document Analyst v2.0**")
+        st.markdown("Built by Devansh Singh")
+        st.markdown("Powered by Together AI")
+    
+    # Main content area with tabs
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏠 Home", "📤 Upload & Process", "💬 AI Chat", "📊 Analytics", "⚙️ Settings"])
+    
+    with tab1:
+        # Welcome and features section
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            st.markdown("## 🎯 What can I do for you?")
+            
+            features = [
+                ("� Multi-Format Support", "PDF, DOCX, TXT, CSV, Excel, Images - I handle them all!"),
+                ("🧠 AI-Powered Analysis", "Smart summaries and insights using advanced AI models"),
+                ("📊 Data Visualization", "Automatic charts, graphs, and statistical analysis"),
+                ("💬 Conversational Q&A", "Ask questions in natural language, get intelligent answers"),
+                ("📈 Comprehensive Reports", "Executive summaries with key findings and recommendations"),
+                ("⚡ Real-time Processing", "Fast document processing with live progress tracking")
             ]
             
-            selected_model = st.selectbox(
-                "Choose Model",
-                available_models,
-                index=0,
-                help="Note: Some models have stricter rate limits. Llama-3.1-8B-Instruct-Turbo is recommended for most use cases."
+            for title, desc in features:
+                st.markdown(f"""
+                <div class="feature-card">
+                    <h4>{title}</h4>
+                    <p>{desc}</p>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("### 🚀 Quick Start")
+            st.markdown("""
+            1. **📤 Upload** your documents in the **Upload & Process** tab
+            2. **🔄 Process** files to extract insights
+            3. **💬 Chat** with your documents using AI
+            4. **📊 Analyze** data with automatic visualizations
+            5. **📈 Export** reports and findings
+            """)
+            
+            if not agent.document_content:
+                st.info("� Go to **Upload & Process** tab to start!")
+                st.markdown("**🎯 Next Step:** Click the **📤 Upload & Process** tab above")
+            else:
+                st.success(f"🎉 {len(agent.document_content)} files ready for analysis!")
+    
+    with tab2:
+        # Upload and processing interface
+        st.markdown("## 📤 Document Upload & Processing")
+        
+        # File upload section in the main tab
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            st.markdown("### 📁 Upload Your Documents")
+            uploaded_files = st.file_uploader(
+                "Choose files to analyze",
+                accept_multiple_files=True,
+                type=['pdf', 'docx', 'txt', 'csv', 'xlsx', 'jpg', 'jpeg', 'png', 'xls'],
+                help="Supported formats: PDF, DOCX, TXT, CSV, Excel, Images (JPG, PNG)",
+                key="main_uploader"
             )
             
-            if selected_model != agent.model:
-                if st.button("🔄 Update Model"):
-                    agent.model = selected_model
-                    st.success(f"✅ Model updated to: {selected_model}")
-                    st.rerun()
-            
-            # Rate limit info
-            if "Maverick" in selected_model:
-                st.warning("⚠️ This model has very strict rate limits (0.6 queries/minute)")
+            # Upload instructions
+            st.markdown("""
+            **📋 Instructions:**
+            - **Drag & drop** files or **click** to browse
+            - **Multiple files** can be uploaded at once
+            - **Supported formats**: PDF, Word, Text, CSV, Excel, Images
+            - **File size limit**: 200MB per file
+            """)
+        
+        with col2:
+            st.markdown("### 📊 Upload Stats")
+            if agent.document_content:
+                st.metric("📄 Total Files", len(agent.document_content))
+                st.metric("📊 Data Files", len(agent.data_frames))
+                st.metric("💬 Conversations", len(agent.conversation_history))
             else:
-                st.info("ℹ️ This model has standard rate limits")
-        
-        # File upload
-        uploaded_files = st.file_uploader(
-            "Upload documents", 
-            accept_multiple_files=True,
-            type=['pdf', 'docx', 'txt', 'csv', 'xlsx', 'jpg', 'jpeg', 'png'],
-            help="Supported formats: PDF, DOCX, TXT, CSV, XLSX, Images"
-        )
-        
-        # Show processed files
-        if agent.document_content:
-            st.subheader("📄 Processed Files")
-            file_info = agent.get_file_info()
-            for file_name, info in file_info.items():
-                with st.expander(f"📄 {file_name}"):
-                    st.write(f"**Type:** {info['type'].upper()}")
-                    st.write(f"**Has Data:** {'Yes' if info['has_data'] else 'No'}")
-                    st.write(f"**Summary:** {info['summary']}")
-        
-        # Clear all files button
-        if agent.document_content and st.button("🗑️ Clear All Files"):
-            agent.document_content.clear()
-            agent.data_frames.clear()
-            agent.analysis_results.clear()
-            agent.conversation_history.clear()
-            st.success("All files cleared!")
-            st.rerun()
-    
-    # Main content area
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.header("📤 Upload & Process")
+                st.info("No files uploaded yet")
+            
+            # Quick actions
+            if agent.document_content:
+                if st.button("🗑️ Clear All Files", type="secondary", use_container_width=True):
+                    agent.document_content.clear()
+                    agent.data_frames.clear()
+                    agent.analysis_results.clear()
+                    agent.conversation_history.clear()
+                    st.success("✨ All files cleared!")
+                    st.rerun()
         
         if uploaded_files:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+            st.markdown("### 🔄 Processing Documents...")
             
-            for i, uploaded_file in enumerate(uploaded_files):
-                status_text.text(f"Processing {uploaded_file.name}...")
+            # Create a progress container
+            progress_container = st.container()
+            
+            with progress_container:
+                progress_bar = st.progress(0)
+                status_text = st.empty()
                 
-                # Save uploaded file temporarily
-                temp_path = f"temp_{uploaded_file.name}"
-                with open(temp_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                
-                try:
-                    # Process file
-                    result = agent.process_document(temp_path, uploaded_file.name)
+                for i, uploaded_file in enumerate(uploaded_files):
+                    # Check if already processed
+                    if uploaded_file.name in agent.document_content:
+                        status_text.text(f"✅ {uploaded_file.name} already processed")
+                        continue
                     
-                    # Show processing result
-                    st.success(f"✅ Processed: {uploaded_file.name}")
+                    status_text.text(f"🔄 Processing {uploaded_file.name}...")
                     
-                    with st.expander(f"📋 Summary - {uploaded_file.name}"):
-                        st.write(result['summary'])
+                    # Save uploaded file temporarily
+                    temp_path = f"temp_{uploaded_file.name}"
+                    with open(temp_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
                     
-                    # If it's structured data, show analysis
-                    if uploaded_file.name in agent.data_frames:
-                        df = agent.data_frames[uploaded_file.name]
+                    try:
+                        # Process file
+                        result = agent.process_document(temp_path, uploaded_file.name)
                         
-                        with st.expander(f"📊 Data Preview - {uploaded_file.name}"):
-                            st.dataframe(df.head(10))
+                        # Display processing result
+                        with st.expander(f"✅ {uploaded_file.name} - Processed Successfully", expanded=True):
+                            col1, col2 = st.columns([2, 1])
                             
-                            # Basic info
-                            col_a, col_b = st.columns(2)
-                            with col_a:
-                                st.metric("Rows", df.shape[0])
-                                st.metric("Columns", df.shape[1])
-                            with col_b:
-                                st.write("**Column Types:**")
-                                st.write(df.dtypes.to_dict())
+                            with col1:
+                                st.markdown("**📝 AI Summary:**")
+                                st.write(result['summary'])
+                            
+                            with col2:
+                                st.markdown("**� File Info:**")
+                                st.text(f"Type: {result['file_type'].upper()}")
+                                st.text(f"Size: {len(result['content'])} chars")
+                                
+                                if result['data_frame'] is not None:
+                                    df = result['data_frame']
+                                    st.text(f"Rows: {df.shape[0]}")
+                                    st.text(f"Columns: {df.shape[1]}")
                         
-                        # Perform analysis
-                        analysis = agent.perform_data_analysis(df, uploaded_file.name)
-                        
-                        # Create and show visualizations
-                        viz_paths = agent.create_visualizations(df, uploaded_file.name)
-                        if viz_paths:
-                            with st.expander(f"📈 Visualizations - {uploaded_file.name}"):
-                                for viz_path in viz_paths:
-                                    if os.path.exists(viz_path):
-                                        st.image(viz_path, use_column_width=True)
+                        # If structured data, show preview and analysis
+                        if uploaded_file.name in agent.data_frames:
+                            df = agent.data_frames[uploaded_file.name]
+                            
+                            with st.expander(f"📊 Data Preview - {uploaded_file.name}"):
+                                # Data preview
+                                st.markdown("**First 10 rows:**")
+                                st.dataframe(df.head(10), use_container_width=True)
+                                
+                                # Quick stats
+                                col1, col2, col3, col4 = st.columns(4)
+                                with col1:
+                                    st.metric("📏 Rows", df.shape[0])
+                                with col2:
+                                    st.metric("📋 Columns", df.shape[1])
+                                with col3:
+                                    st.metric("🔢 Numeric", len(df.select_dtypes(include=['number']).columns))
+                                with col4:
+                                    st.metric("📝 Text", len(df.select_dtypes(include=['object']).columns))
+                            
+                            # Auto-generate visualizations
+                            with st.spinner("🎨 Creating visualizations..."):
+                                viz_paths = agent.create_visualizations(df, uploaded_file.name)
+                                
+                                if viz_paths:
+                                    with st.expander(f"📈 Auto-Generated Charts - {uploaded_file.name}"):
+                                        # Display visualizations in columns
+                                        viz_cols = st.columns(2)
+                                        for idx, viz_path in enumerate(viz_paths):
+                                            if os.path.exists(viz_path):
+                                                with viz_cols[idx % 2]:
+                                                    chart_name = os.path.basename(viz_path).replace('.png', '').replace('_', ' ').title()
+                                                    st.markdown(f"**{chart_name}**")
+                                                    st.image(viz_path, use_container_width=True)
+                    
+                    except Exception as e:
+                        st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
+                    
+                    finally:
+                        # Clean up temporary file
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+                    
+                    # Update progress
+                    progress_bar.progress((i + 1) / len(uploaded_files))
                 
-                except Exception as e:
-                    st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
-                
-                finally:
-                    # Clean up temporary file
-                    if os.path.exists(temp_path):
-                        os.remove(temp_path)
-                
-                # Update progress
-                progress_bar.progress((i + 1) / len(uploaded_files))
+                status_text.text("✅ All files processed successfully!")
+                time.sleep(1)
+                progress_bar.empty()
+                status_text.empty()
+        
+        else:
+            # Empty state with helpful instructions
+            st.markdown("""
+            <div class="upload-zone">
+                <h3>📁 Drop your documents here!</h3>
+                <p>Supported formats: PDF, DOCX, TXT, CSV, Excel, Images</p>
+                <p>Use the file uploader in the sidebar to get started →</p>
+            </div>
+            """, unsafe_allow_html=True)
             
-            status_text.text("✅ All files processed!")
-            progress_bar.empty()
-            status_text.empty()
-    
-    with col2:
-        st.header("💬 Ask Questions")
+            st.markdown("### 💡 What happens when you upload?")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.markdown("""
+                **🔍 Text Extraction**
+                - PDF text extraction
+                - Word document parsing
+                - Image OCR processing
+                """)
+            
+            with col2:
+                st.markdown("""
+                **🧠 AI Analysis**
+                - Intelligent summaries
+                - Key insights extraction
+                - Pattern recognition
+                """)
+            
+            with col3:
+                st.markdown("""
+                **📊 Data Processing**
+                - Automatic statistics
+                - Chart generation
+                - Correlation analysis
+                """)
+
+    with tab3:
+        st.markdown("## 💬 Chat with Your Documents")
         
         if not agent.document_content:
-            st.info("👆 Upload documents first to start asking questions!")
+            st.info("� Upload documents first to start chatting!")
+            st.markdown("""
+            ### 🎯 What you can ask:
+            - "What are the key insights from this data?"
+            - "Summarize the main points of this document"
+            - "What patterns do you see in the numbers?"
+            - "What are the most important findings?"
+            - "Show me correlations between variables"
+            """)
         else:
-            # Question input
-            question = st.text_area(
-                "What would you like to know about your documents?",
-                placeholder="e.g., What are the key insights from this data? What patterns do you see? Summarize the main points.",
-                height=100
+            # Chat interface
+            st.markdown("### 🗨️ Ask anything about your documents")
+            
+            # Chat input
+            user_question = st.text_area(
+                "Your Question:",
+                placeholder="Ask anything about your uploaded documents...",
+                height=100,
+                help="Type your question and press Ctrl+Enter or click the button below"
             )
             
-            # Ask button
-            if st.button("🔍 Get Answer", type="primary"):
-                if question.strip():
-                    with st.spinner("🤔 Thinking..."):
-                        try:
-                            answer = agent.answer_question(question)
-                            st.success("💡 **Answer:**")
-                            st.write(answer)
-                        except Exception as e:
-                            st.error(f"❌ Error: {str(e)}")
-                else:
-                    st.warning("Please enter a question!")
+            # Enhanced ask button
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                ask_button = st.button("🔍 Get AI Answer", type="primary", use_container_width=True)
+            
+            if ask_button and user_question.strip():
+                with st.spinner("� AI is thinking..."):
+                    try:
+                        answer = agent.answer_question(user_question)
+                        
+                        # Display answer in a nice format
+                        st.markdown("### 💡 AI Response:")
+                        st.markdown(f"""
+                        <div class="chat-container">
+                            <p><strong>❓ Your Question:</strong> {user_question}</p>
+                            <p><strong>🤖 AI Answer:</strong> {answer}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error getting answer: {str(e)}")
+            
+            elif ask_button:
+                st.warning("Please enter a question first!")
+            
+            # Quick question buttons for data files
+            if agent.data_frames:
+                st.markdown("### 🚀 Quick Questions")
+                st.markdown("*Click any button for instant insights:*")
+                
+                quick_questions = [
+                    ("📊 Key Statistics", "What are the key statistics and summary of this dataset?"),
+                    ("📈 Trends & Patterns", "What trends and patterns do you see in this data?"),
+                    ("🔍 Data Quality", "Are there any missing values or data quality issues?"),
+                    ("💡 Key Insights", "What are the most important insights from this data?"),
+                    ("🔗 Correlations", "What correlations exist between different variables?"),
+                    ("📋 Executive Summary", "Provide an executive summary of the findings")
+                ]
+                
+                # Display buttons in a grid
+                for i in range(0, len(quick_questions), 2):
+                    col1, col2 = st.columns(2)
+                    
+                    # First button
+                    with col1:
+                        if i < len(quick_questions):
+                            title, question = quick_questions[i]
+                            if st.button(title, key=f"quick_{i}", use_container_width=True):
+                                with st.spinner("🤖 Analyzing..."):
+                                    try:
+                                        answer = agent.answer_question(question)
+                                        st.success("💡 **Answer:**")
+                                        st.write(answer)
+                                    except Exception as e:
+                                        st.error(f"❌ Error: {str(e)}")
+                    
+                    # Second button
+                    with col2:
+                        if i + 1 < len(quick_questions):
+                            title, question = quick_questions[i + 1]
+                            if st.button(title, key=f"quick_{i+1}", use_container_width=True):
+                                with st.spinner("� Analyzing..."):
+                                    try:
+                                        answer = agent.answer_question(question)
+                                        st.success("💡 **Answer:**")
+                                        st.write(answer)
+                                    except Exception as e:
+                                        st.error(f"❌ Error: {str(e)}")
             
             # Conversation history
             if agent.conversation_history:
-                st.subheader("💭 Conversation History")
-                for i, item in enumerate(reversed(agent.conversation_history[-5:])):  # Show last 5
-                    with st.expander(f"Q{len(agent.conversation_history)-i}: {item['question'][:50]}..."):
-                        st.write(f"**Q:** {item['question']}")
-                        st.write(f"**A:** {item['answer']}")
-            
-            # Quick questions for data files
-            if agent.data_frames:
-                st.subheader("🚀 Quick Questions")
-                quick_questions = [
-                    "What are the key statistics of this dataset?",
-                    "What patterns or trends do you see in the data?",
-                    "Are there any missing values or data quality issues?",
-                    "What insights can you derive from this data?",
-                    "What are the correlations between different variables?"
-                ]
+                st.markdown("### 💭 Recent Conversations")
                 
-                for q in quick_questions:
-                    if st.button(f"❓ {q}", key=f"quick_{q}"):
-                        with st.spinner("🤔 Analyzing..."):
-                            try:
-                                answer = agent.answer_question(q)
-                                st.success("💡 **Answer:**")
-                                st.write(answer)
-                            except Exception as e:
-                                st.error(f"❌ Error: {str(e)}")
+                # Show last 3 conversations
+                for i, item in enumerate(reversed(agent.conversation_history[-3:])):
+                    with st.expander(f"💬 Q{len(agent.conversation_history)-i}: {item['question'][:60]}..."):
+                        st.markdown(f"**❓ Question:** {item['question']}")
+                        st.markdown(f"**🤖 Answer:** {item['answer']}")
+
+    with tab4:
+        # Analytics Dashboard
+        st.markdown("## 📊 Analytics Dashboard")
+        
+        if not agent.data_frames:
+            st.info("📈 Upload CSV or Excel files to see analytics!")
+            st.markdown("""
+            ### 📊 Available Analytics:
+            - **Statistical Summary**: Mean, median, mode, standard deviation
+            - **Data Quality Check**: Missing values, duplicates, outliers
+            - **Correlation Analysis**: Relationships between variables
+            - **Distribution Plots**: Histograms, box plots, scatter plots
+            - **Trend Analysis**: Time series and pattern recognition
+            """)
+        else:
+            # Display analytics for each dataset
+            for file_name, df in agent.data_frames.items():
+                with st.expander(f"📊 Analytics: {file_name}", expanded=True):
+                    # Basic metrics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("📏 Rows", df.shape[0])
+                    with col2:
+                        st.metric("📋 Columns", df.shape[1])
+                    with col3:
+                        missing_percent = (df.isnull().sum().sum() / (df.shape[0] * df.shape[1]) * 100)
+                        st.metric("❌ Missing %", f"{missing_percent:.1f}%")
+                    with col4:
+                        numeric_cols = len(df.select_dtypes(include=['number']).columns)
+                        st.metric("🔢 Numeric", numeric_cols)
+                    
+                    # Statistical summary for numeric columns
+                    numeric_df = df.select_dtypes(include=['number'])
+                    if not numeric_df.empty:
+                        st.markdown("**📈 Statistical Summary:**")
+                        st.dataframe(numeric_df.describe(), use_container_width=True)
+                    
+                    # Show visualizations if they exist
+                    viz_dir = f"visualizations_{file_name.replace('.', '_')}"
+                    if os.path.exists(viz_dir):
+                        viz_files = [f for f in os.listdir(viz_dir) if f.endswith('.png')]
+                        if viz_files:
+                            st.markdown("**📊 Visualizations:**")
+                            for viz_file in viz_files:
+                                viz_path = os.path.join(viz_dir, viz_file)
+                                chart_name = viz_file.replace('.png', '').replace('_', ' ').title()
+                                st.markdown(f"*{chart_name}*")
+                                st.image(viz_path, use_container_width=True)
+
+    with tab5:
+        # Settings Tab
+        st.markdown("## ⚙️ Application Settings")
+        
+        # API Configuration Section
+        st.markdown("### 🔑 API Key Configuration")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            # Current API Key Status
+            current_key = os.getenv('TOGETHER_API_KEY')
+            if current_key:
+                st.success(f"✅ **Current API Key Status:** Active")
+                st.text(f"🔐 Key Preview: {current_key[:12]}...{current_key[-8:]}")
+                st.text(f"📅 Loaded from: Environment (.env file)")
+            else:
+                st.error("❌ **No API Key Found**")
+                st.warning("Please set your TOGETHER_API_KEY in the .env file or use temporary override below.")
+            
+            # Temporary API Key Override
+            st.markdown("#### 🔄 Temporary API Key Override")
+            st.info("💡 This will override your .env API key for this session only")
+            
+            temp_api_key = st.text_input(
+                "Enter Temporary API Key:",
+                type="password",
+                placeholder="Enter your Together AI API key here...",
+                help="This will be used instead of the .env file key until you refresh the page"
+            )
+            
+            col_a, col_b, col_c = st.columns([1, 1, 1])
+            with col_a:
+                if st.button("🔄 Apply Temporary Key", type="primary", use_container_width=True):
+                    if temp_api_key.strip():
+                        try:
+                            # Test the API key by creating a new agent
+                            test_agent = DocumentAnalystAgent(temp_api_key)
+                            st.session_state.agent = test_agent
+                            st.session_state.temp_api_key = temp_api_key
+                            st.success("✅ Temporary API key applied successfully!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Failed to apply API key: {str(e)}")
+                    else:
+                        st.warning("Please enter a valid API key")
+            
+            with col_b:
+                if st.button("🔄 Reset to .env Key", type="secondary", use_container_width=True):
+                    if current_key:
+                        try:
+                            st.session_state.agent = DocumentAnalystAgent(current_key)
+                            if 'temp_api_key' in st.session_state:
+                                del st.session_state.temp_api_key
+                            st.success("✅ Reset to .env API key!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Failed to reset: {str(e)}")
+                    else:
+                        st.error("No .env API key found to reset to")
+            
+            with col_c:
+                if st.button("🧪 Test Current Key", use_container_width=True):
+                    try:
+                        # Test the current agent's API key with a simple call
+                        test_response = agent._make_api_call_with_retry("Hello, this is a test.", max_tokens=10)
+                        if "error" not in test_response.lower():
+                            st.success("✅ API key is working correctly!")
+                        else:
+                            st.error(f"❌ API key test failed: {test_response}")
+                    except Exception as e:
+                        st.error(f"❌ API key test failed: {str(e)}")
+        
+        with col2:
+            st.markdown("#### 📖 How to get API Key")
+            st.markdown("""
+            1. Visit [Together AI](https://api.together.xyz/)
+            2. Sign up or log in to your account
+            3. Navigate to API Keys section
+            4. Create a new API key
+            5. Copy and paste it here or in your .env file
+            """)
+            
+            if st.button("🌐 Open Together AI", use_container_width=True):
+                st.markdown("[🔗 Click here to visit Together AI](https://api.together.xyz/)")
+        
+        st.markdown("---")
+        
+        # Model Configuration Section
+        st.markdown("### 🤖 AI Model Configuration")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            st.markdown(f"**Current Model:** `{agent.model}`")
+            
+            # Available models with descriptions
+            available_models = {
+                "meta-llama/Llama-3.1-8B-Instruct-Turbo": {
+                    "name": "Llama 3.1 8B Turbo (Recommended)",
+                    "description": "Fast, efficient, good for most tasks",
+                    "rate_limit": "Standard",
+                    "performance": "⭐⭐⭐⭐"
+                },
+                "meta-llama/Llama-3.1-70B-Instruct-Turbo": {
+                    "name": "Llama 3.1 70B Turbo",
+                    "description": "More powerful, better reasoning",
+                    "rate_limit": "Standard",
+                    "performance": "⭐⭐⭐⭐⭐"
+                },
+                "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo": {
+                    "name": "Llama 3.2 11B Vision",
+                    "description": "Vision-capable model",
+                    "rate_limit": "Standard",
+                    "performance": "⭐⭐⭐⭐"
+                },
+                "mistralai/Mixtral-8x7B-Instruct-v0.1": {
+                    "name": "Mixtral 8x7B",
+                    "description": "Alternative high-performance model",
+                    "rate_limit": "Standard",
+                    "performance": "⭐⭐⭐⭐"
+                },
+                "NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO": {
+                    "name": "Nous Hermes 2 Mixtral",
+                    "description": "Optimized for conversations",
+                    "rate_limit": "Standard",
+                    "performance": "⭐⭐⭐⭐"
+                }
+            }
+            
+            # Model selection
+            model_names = list(available_models.keys())
+            current_index = model_names.index(agent.model) if agent.model in model_names else 0
+            
+            selected_model = st.selectbox(
+                "Select AI Model:",
+                options=model_names,
+                format_func=lambda x: available_models[x]["name"],
+                index=current_index,
+                help="Choose the AI model that best fits your needs"
+            )
+            
+            # Show model details
+            if selected_model:
+                model_info = available_models[selected_model]
+                st.markdown(f"""
+                **Model Details:**
+                - **Description:** {model_info['description']}
+                - **Rate Limit:** {model_info['rate_limit']}
+                - **Performance:** {model_info['performance']}
+                """)
+            
+            # Apply model change
+            col_a, col_b = st.columns([1, 1])
+            with col_a:
+                if st.button("🔄 Apply Model Change", type="primary", use_container_width=True):
+                    if selected_model != agent.model:
+                        agent.model = selected_model
+                        st.success(f"✅ Model changed to: {available_models[selected_model]['name']}")
+                        st.rerun()
+                    else:
+                        st.info("Model is already selected")
+            
+            with col_b:
+                if st.button("🧪 Test Selected Model", use_container_width=True):
+                    try:
+                        # Temporarily test the selected model
+                        old_model = agent.model
+                        agent.model = selected_model
+                        test_response = agent._make_api_call_with_retry("Respond with 'Model test successful'", max_tokens=10)
+                        agent.model = old_model  # Restore original model
+                        
+                        if "successful" in test_response.lower():
+                            st.success("✅ Model test successful!")
+                        else:
+                            st.warning(f"⚠️ Model responded: {test_response}")
+                    except Exception as e:
+                        st.error(f"❌ Model test failed: {str(e)}")
+        
+        with col2:
+            st.markdown("#### 📊 Model Comparison")
+            st.markdown("""
+            **🚀 Turbo Models:**
+            - Faster response times
+            - Lower latency
+            - Good for real-time applications
+            
+            **🧠 Large Models (70B):**
+            - Better reasoning
+            - More accurate responses
+            - Higher quality analysis
+            
+            **👁️ Vision Models:**
+            - Can process images
+            - Multimodal capabilities
+            - Text + image understanding
+            """)
+        
+        st.markdown("---")
+        
+        # Application Settings
+        st.markdown("### 🎛️ Application Settings")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 🔧 Processing Settings")
+            
+            # Max tokens setting
+            max_tokens = st.slider(
+                "Max Response Tokens:",
+                min_value=100,
+                max_value=2000,
+                value=500,
+                step=50,
+                help="Maximum number of tokens for AI responses"
+            )
+            
+            # Temperature setting
+            temperature = st.slider(
+                "AI Creativity (Temperature):",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.3,
+                step=0.1,
+                help="Higher values make responses more creative but less focused"
+            )
+            
+            # Retry attempts
+            max_retries = st.slider(
+                "Max Retry Attempts:",
+                min_value=1,
+                max_value=5,
+                value=3,
+                help="Number of times to retry failed API calls"
+            )
+            
+            if st.button("💾 Save Processing Settings", use_container_width=True):
+                st.session_state.max_tokens = max_tokens
+                st.session_state.temperature = temperature
+                st.session_state.max_retries = max_retries
+                st.success("✅ Processing settings saved!")
+        
+        with col2:
+            st.markdown("#### 📈 Session Information")
+            
+            # Session stats
+            st.metric("📄 Processed Files", len(agent.document_content))
+            st.metric("📊 Datasets Loaded", len(agent.data_frames))
+            st.metric("💬 Conversations", len(agent.conversation_history))
+            
+            # Current settings display
+            st.markdown("**Current Settings:**")
+            st.text(f"Max Tokens: {getattr(st.session_state, 'max_tokens', 500)}")
+            st.text(f"Temperature: {getattr(st.session_state, 'temperature', 0.3)}")
+            st.text(f"Max Retries: {getattr(st.session_state, 'max_retries', 3)}")
+            
+            # Session management
+            if st.button("🔄 Reset Session", type="secondary", use_container_width=True):
+                # Clear all session data
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.success("✅ Session reset! Please refresh the page.")
+        
+        st.markdown("---")
+        
+        # About Section
+        st.markdown("### ℹ️ About")
+        st.markdown("""
+        **📊 AI Document Analyst v2.0**
+        - Built by Devansh Singh
+        - Powered by Together AI & Meta Llama
+        - GitHub: [Dataa_Analyst_Agent](https://github.com/DevanshSrajput/Dataa_Analyst_Agent)
+        - Email: dksdevansh@gmail.com
+        
+        **🚀 Features:**
+        - Multi-format document processing
+        - AI-powered analysis and insights
+        - Interactive chat interface
+        - Automatic data visualization
+        - Comprehensive analytics dashboard
+        """)
 
 def smart_streamlit_launch():
     """Smart Streamlit launcher"""
-    port = 8501
+    port = 8502
     url = f"http://localhost:{port}"
     
     try:
