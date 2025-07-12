@@ -38,14 +38,28 @@ All this, wrapped in a gorgeous Streamlit UI with tabs, themes, and more bells a
 
 > Glimpses! So you know it actually works 😁
 
-<img src="Assests/v2/Home.png" width="00"> 
-<img src="Assests/v2/U&P.png" width="300"> 
-<img src="Assests/v2/U&P-2.png" width="300">
-<img src="Assests/v2/chat.png" width="300">
-<img src="Assests/v2/chat-2.png" width="300">
-<img src="Assests/v2/Analytics.png" width="300">
-<img src="Assests/v2/Settings.png" width="300">
-<img src="Assests/v2/settings-2.png" width="300">
+<div align="center">
+<table>
+<tr>
+<td align="center"><img src="Assests/v2/Home.png" width="400"><br><b>🏠 Home Dashboard</b></td>
+</tr>
+<tr>
+<td align="center"><img src="Assests/v2/U&P.png" width="400"><br><b>📤 Upload & Process</b></td>
+<td align="center"><img src="Assests/v2/U&P-2.png" width="400"><br><b>📊 File Processing</b></td>
+</tr>
+<tr>
+<td align="center"><img src="Assests/v2/chat.png" width="400"><br><b>💬 AI Chat Interface</b></td>
+<td align="center"><img src="Assests/v2/chat-2.png" width="400"><br><b>🤖 Chat Conversation</b></td>
+</tr>
+<tr>
+<td align="center"><img src="Assests/v2/Analytics.png" width="400"><br><b>📊 Analytics Dashboard</b></td>
+</tr>
+<tr>
+<td align="center"><img src="Assests/v2/Settings.png" width="400"><br><b>⚙️ Settings Panel</b></td>
+<td align="center"><img src="Assests/v2/settings-2.png" width="400"><br><b>🌙 Dark Mode Settings</b></td>
+</tr>
+</table>
+</div>
 
 > The UI may differ slightly if I decided to tweak it and forgot to update screenshots. JK! (But seriously, it might.)
 
