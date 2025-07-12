@@ -38,14 +38,14 @@ All this, wrapped in a gorgeous Streamlit UI with tabs, themes, and more bells a
 
 > Glimpses! So you know it actually works 😁
 
-<img src="Assests/v2/Home.png" width="400"> 
-<img src="Assests/v2/U&P.png" width="400"> 
-<img src="Assests/v2/U&P-2.png" width="400">
-<img src="Assests/v2/chat.png" width="400">
-<img src="Assests/v2/chat-2.png" width="400">
-<img src="Assests/v2/Analytics.png" width="400">
-<img src="Assests/v2/Settings.png" width="400">
-<img src="Assests/v2/settings-2.png" width="400">
+<img src="Assests/v2/Home.png" width="00"> 
+<img src="Assests/v2/U&P.png" width="300"> 
+<img src="Assests/v2/U&P-2.png" width="300">
+<img src="Assests/v2/chat.png" width="300">
+<img src="Assests/v2/chat-2.png" width="300">
+<img src="Assests/v2/Analytics.png" width="300">
+<img src="Assests/v2/Settings.png" width="300">
+<img src="Assests/v2/settings-2.png" width="300">
 
 > The UI may differ slightly if I decided to tweak it and forgot to update screenshots. JK! (But seriously, it might.)
 
