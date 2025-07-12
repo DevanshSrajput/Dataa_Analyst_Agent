@@ -553,7 +553,7 @@ def create_streamlit_ui():
     
     # Initialize theme if not set
     if 'theme_mode' not in st.session_state:
-        st.session_state.theme_mode = 'light'
+        st.session_state.theme_mode = 'dark'
     
     # Custom CSS for modern styling with theme support
     theme_mode = st.session_state.theme_mode
@@ -1994,7 +1994,7 @@ def create_streamlit_ui():
                 "Choose Theme:",
                 options=list(theme_options.keys()),
                 format_func=lambda x: theme_options[x]["name"],
-                index=0 if st.session_state.theme_mode == 'light' else 1,
+                index=1 if st.session_state.theme_mode == 'dark' else 0,
                 help="Select your preferred visual theme"
             )
             
@@ -2020,8 +2020,8 @@ def create_streamlit_ui():
             
             with col_b:
                 if st.button("🔄 Reset to Default", use_container_width=True):
-                    st.session_state.theme_mode = 'light'
-                    st.success("✅ Theme reset to Light Mode!")
+                    st.session_state.theme_mode = 'dark'
+                    st.success("✅ Theme reset to Dark Mode!")
                     st.rerun()
         
         with col2:
