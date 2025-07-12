@@ -1,182 +1,170 @@
-# 📊 Document Analyst Agent
+# 📊 AI Document Analyst v2.0
 
-> _"Because reading your own documents is so 2022. Let the AI do the heavy lifting while you take all the credit."_
+> _"Because reading your own documents is so 2022. Let the AI do the heavy lifting while you take all the credit. Now with 100% more dark mode!"_
 
 ---
 
-## 😏 What Is This?
+## 😏 What Is This Masterpiece?
 
-Welcome to **Document Analyst Agent** – the tool you never knew you desperately needed, built by _Devansh Singh_ (yes, I made this, and yes, I'm still waiting for my Nobel Prize) meet Analyst Agent
+Welcome to **AI Document Analyst v2.0** – the tool you never knew you desperately needed, now with a complete UI makeover that'll make your other apps jealous. Built by _Devansh Singh_ (yes, I made this, and yes, I'm still waiting for my Nobel Prize).
 
-This Python-powered, AI-infused, sarcasm-enabled agent will:
+This Python-powered, AI-infused, theme-switching, sarcasm-enabled agent will:
 
 - **Read** your PDFs, DOCX, TXT, CSV, Excel, and even images (OCR, because why not?).
-- **Summarize** them using LLMs (Meta Llama-4, because GPT is too mainstream).
-- **Analyze** your data (pandas, numpy, matplotlib, seaborn – the Avengers of data).
-- **Visualize** trends and patterns (because you love pretty colors).
-- **Answer** your questions, no matter how vague or oddly specific.
-- **Generate Reports** that sound like you spent hours on them (you didn’t).
+- **Summarize** them using Meta Llama models via Together AI (because free is better than expensive).
+- **Analyze** your data with pandas wizardry (the Avengers of data science).
+- **Visualize** trends and patterns with auto-generated charts (because you love pretty colors).
+- **Chat** with your documents like they're your best friend (spoiler: they're more reliable).
+- **Switch** between light and dark themes (because your eyes deserve options).
+- **Generate Reports** that sound like you spent hours on them (you didn't).
 
-All this, wrapped in a Streamlit UI so easy, even your boss could use it (but please don’t let them).
-
----
-> PS: Check Out 
- - [Bug Fix](#Bug-Fixes) below <br>
->In case you encounter any issues 
-
-----
-
-## 📸 ScreenShots
->Glimpses! so you know it works 😁 
- 
-<img src="Assests/Dashboard.png"> <img src="Assests/Processed File.png"> <img src="Assests/Answering Questions.png">
-> The UI may differ for you, If i decided to tweak it and not update the Screenshots. JK!
-
-## 🚀 Features (Because You’re Too Busy to Read the Code)
-
-- **Multi-format Support:** PDF, DOCX, TXT, CSV, XLSX, JPG, PNG, and more. If you can upload it, I’ll pretend I can read it.
-- **LLM Summaries:** Uses Meta Llama-4 via Together API. If my API key dies, just use your own (Ctrl+F for `api_key = os.getenv('TOGETHER_API_KEY')` – you’re welcome).
-- **Data Analysis:** Automatic stats, missing values, unique counts, correlations, and more. No, you don’t need a PhD.
-- **Visualizations:** Histograms, heatmaps, box plots, bar charts – all auto-generated, all Instagram-worthy.
-- **Conversational Q&A:** Ask anything about your docs. The agent remembers the last 3 things you said, which is more than most people.
-- **Comprehensive Reports:** Executive summaries, key findings, recommendations – so you can sound smart in meetings.
-- **Streamlit UI:** Drag, drop, click, done. No command line, no existential crisis.
+All this, wrapped in a gorgeous Streamlit UI with tabs, themes, and more bells and whistles than a marching band.
 
 ---
 
-## 🛠️ How to Run (Because Reading Instructions Is Fun)
+## 🎨 What's New in v2.0? (The Glow-Up Edition)
 
-1. **Install Requirements:**
-
-   ```sh
-   pip install -r requirements.txt
-   ```
-
-   (Or just install everything you see in the imports. I believe in you.)
-
-2. **Run the App:**
-
-   ```sh
-   python Data_Analyst_Agent.py
-   ```
-
-   Or, if you’re feeling rebellious:
-
-   ```sh
-   streamlit run Data_Analyst_Agent.py
-   ```
-
-3. **Wait for the browser to open.** If it doesn’t, open [http://localhost:8501](http://localhost:8501) yourself. I can’t do everything for you.
+- **🌙 Dark/Light Mode**: Toggle between themes like a pro. Your retinas will thank you.
+- **📑 Tabbed Interface**: Home, Upload, Chat, Analytics, and Settings tabs. Organization is sexy.
+- **🎯 Enhanced Upload**: Drag & drop files with style. Progress bars included (because waiting is fun).
+- **💬 Interactive Chat**: Ask your documents anything. They actually respond now.
+- **⚙️ Settings Panel**: Configure everything from AI models to themes. Power user vibes.
+- **📊 Advanced Analytics**: Beautiful charts, stats, and insights that'll make Excel cry.
+- **🎪 Better UI**: Modern gradients, cards, and animations. Instagram-worthy data analysis.
 
 ---
 
-## 🔑 API Key (Because Free Lunches Don’t Last)
+## 📸 Screenshots
+> Glimpses! So you know it actually works 😁 
 
-- Uses Together API for LLM magic.
-- Connect with me if getting your own API key is so difficult for you (I'll provide you mine-You`re Welcome)
-- To use your own, search for [api_key = os.getenv('TOGETHER_API_KEY')](http://_vscodecontentref_/0) in the code and replace it. Yes, you have to do it yourself.
+<img src="Assests/v2/Dashboard.png"> 
+<img src="Assests/v2/Dark_Mode.png"> 
+<img src="Assests/v2/Upload_Process.png">
+<img src="Assests/v2/Chat_Interface.png">
 
-## 🔑 API Key Configuration
-
-For security, the application now uses environment variables to store your API key:
-
-### Method 1: Environment File (Recommended)
-
-1. **Copy the example file**:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-2. **Edit the `.env` file** and add your Together AI API key:
-
-   ```env
-   TOGETHER_API_KEY=your_actual_api_key_here
-   ```
-
-3. **Get your API key** from [Together AI](https://together.ai/)
-
-### Method 2: Temporary Override
-
-You can also use the sidebar in the web interface to temporarily override the API key for a single session.
-
-### Method 3: System Environment Variable
-
-Set the environment variable in your system:
-
-- **Windows**: `set TOGETHER_API_KEY=your_key_here`
-- **macOS/Linux**: `export TOGETHER_API_KEY=your_key_here`
-
-### Security Notes
-
-- The `.env` file is automatically ignored by git (see `.gitignore`)
-- Never commit your actual API key to version control
-- Use the `.env.example` file as a template for others
+> The UI may differ slightly if I decided to tweak it and forgot to update screenshots. JK! (But seriously, it might.)
 
 ---
 
-## 🤖 How It Works (Magic, Basically)
+## 🚀 Features (Because You're Too Busy to Read the Code)
 
-1. **Upload Files:** PDFs, Excels, images, your hopes and dreams.
-2. **Processing:** Text extraction, OCR, data loading, all automatic. You just sit there.
-3. **Summaries & Analysis:** LLM-generated summaries, pandas-powered stats. You look smart.
-4. **Visualizations:** Plots saved and shown in the UI. You pretend you made them.
-5. **Ask Questions:** Type anything. Get answers. Repeat until satisfied or existential dread sets in.
-6. **Reports:** One-click, professional, and (mostly) accurate. Fake it till you make it.
+### 🏠 **Home Tab**
+- Welcome dashboard with feature overview
+- Quick start guide (for the impatient)
+- Status indicators (so you know things are working)
+
+### 📤 **Upload & Process Tab**
+- **Multi-format Support:** PDF, DOCX, TXT, CSV, XLSX, JPG, PNG, and more
+- **Drag & Drop Interface:** Because clicking is so 2010
+- **Real-time Processing:** Watch your files get analyzed in real-time
+- **Progress Tracking:** Know exactly what's happening (transparency is key)
+- **Auto-Visualization:** Charts generate themselves (like magic, but with code)
+
+### 💬 **AI Chat Tab**
+- **Conversational Q&A:** Ask anything about your documents
+- **Context Awareness:** Remembers your conversation (better than most humans)
+- **Quick Questions:** Pre-built buttons for instant insights
+- **Smart Responses:** Powered by Meta Llama models via Together AI
+
+### 📊 **Analytics Tab**
+- **Statistical Summaries:** Mean, median, mode, and other math-y things
+- **Data Quality Checks:** Missing values, duplicates, outliers
+- **Correlation Analysis:** Find relationships you never knew existed
+- **Auto-Generated Charts:** Histograms, heatmaps, box plots, and more
+
+### ⚙️ **Settings Tab**
+- **API Key Management:** Built-in key configuration (no more .env hunting)
+- **Model Selection:** Choose from multiple AI models
+- **Theme Switching:** Light/Dark mode toggle
+- **Processing Settings:** Customize AI behavior
+- **Session Management:** Reset everything when you mess up
 
 ---
 
-## 🏆 Why Use This?
+## 🛠️ How to Run (Because Reading Instructions Is Actually Important)
 
-- You hate manual data analysis.
-- You want instant insights with zero effort.
-- You like pretty charts but hate making them.
-- You want to impress your boss with minimal work.
-- You appreciate sarcasm in your tools.
+### 1. **Install Requirements:**
 
-
-
-## Bug Fixes 
-### (Fixed Installation Issues!)
-
-**IMPORTANT**: If you're getting numpy/pandas compatibility errors, we've fixed that!
-
-1. **Setup Environment Variables** (recommended for security):
-
-   ```bash
-   # Copy the example file
-   cp .env.example .env
-
-   # Edit .env and add your Together AI API key
-   # TOGETHER_API_KEY=your_actual_api_key_here
-   ```
-
-2. **Install Dependencies** (recommended):
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Run the Application**:
-
-   ```bash
-   python Data_Analyst_Agent.py
-   ```
-
-4. **Access the Web Interface**:
-   - The app will show the URL in the terminal
-   - Manually navigate to: http://localhost:8501
-
-## 🛠️ Installation Troubleshooting
-
-If you encounter the numpy/pandas compatibility error:
-
-```
-ValueError: numpy.dtype size changed, may indicate binary incompatibility
+```sh
+pip install -r requirements.txt
 ```
 
-**Quick Fix:**
+(Or just install everything you see in the imports. I believe in your package management skills.)
 
+### 2. **Run the App:**
+
+```sh
+python Data_Analyst_Agent.py
+```
+
+Or, if you're feeling fancy:
+
+```sh
+streamlit run Data_Analyst_Agent.py
+```
+
+### 3. **Open Your Browser:**
+- The app will automatically open at `http://localhost:8502`
+- If it doesn't, manually navigate there (I can't click for you)
+
+### 4. **Start Analyzing:**
+- The app includes a **free API key** (yes, FREE!)
+- Just upload your files and start chatting
+- No complicated setup required
+
+---
+
+## 🔑 API Key (Now 100% Free!)
+
+**Good news!** I've decided to be generous and provide my own Together AI API key with the app. Why? Because:
+- Together AI is essentially free for reasonable usage
+- You shouldn't have to jump through hoops to try this
+- I'm feeling charitable (it happens sometimes)
+
+### But If You Want Your Own Key...
+
+1. Get it from [Together AI](https://api.together.xyz/) (they're pretty cool)
+2. Use the **Settings Tab** in the app to add your key
+3. Or set it as an environment variable: `TOGETHER_API_KEY=your_key_here`
+
+### Available AI Models:
+- **Llama 3.1 8B Turbo** (Recommended - fast and efficient)
+- **Llama 3.1 70B Turbo** (Powerful - for when you need the big guns)
+- **Llama 3.2 11B Vision** (Multimodal - can see your images)
+- **Mixtral 8x7B** (Alternative - because options are good)
+- **Nous Hermes 2** (Conversational - optimized for chat)
+
+---
+
+## 🤖 How It Works (Magic, But With Science)
+
+1. **🏠 Start at Home:** Overview of features and quick start guide
+2. **📤 Upload Files:** Drag & drop your documents in the Upload tab
+3. **🔄 Auto-Processing:** Text extraction, OCR, data loading - all automatic
+4. **📊 Get Analytics:** Instant stats, charts, and insights in the Analytics tab
+5. **💬 Chat Away:** Ask questions in the Chat tab - get smart answers
+6. **⚙️ Customize:** Tweak settings, change themes, swap AI models
+7. **📈 Export Results:** Screenshots, insights, whatever you need
+
+---
+
+## 🎯 Why Use This? (Besides My Incredible Ego)
+
+- **Zero Setup Hassle:** API key included, just run and go
+- **Beautiful UI:** Dark mode, themes, modern design
+- **Actually Smart:** Real AI analysis, not just fancy buttons
+- **Multiple File Types:** PDF, Excel, images - it reads everything
+- **Conversation Memory:** Ask follow-up questions like a normal human
+- **Free to Use:** No hidden costs, no subscription nonsense
+- **Regular Updates:** I actually maintain this thing
+
+---
+
+## 🔧 Installation Troubleshooting
+
+If you encounter any errors (because software is never perfect):
+
+### Numpy/Pandas Issues:
 ```bash
 pip uninstall numpy pandas -y
 pip install numpy==1.24.3
@@ -184,24 +172,79 @@ pip install pandas==1.5.3
 pip install -r requirements.txt
 ```
 
-## 📝 Credits
+### Streamlit Issues:
+```bash
+pip install --upgrade streamlit
+```
 
-Made with too much coffee and not enough sleep by **Devansh Singh**.
+### API Issues:
+- The built-in API key should work automatically
+- If not, get your own from [Together AI](https://api.together.xyz/)
+- Add it in the Settings tab or as an environment variable
+
+---
+
+## 📝 Credits & Thanks
+
+Made with excessive amounts of coffee, determination, and a healthy dose of sarcasm by **Devansh Singh**.
+
+Special thanks to:
+- **Together AI** for their awesome API
+- **Streamlit** for making beautiful UIs possible
+- **Meta** for Llama models that actually work
+- **You** for using this instead of doing manual analysis
 
 ---
 
 ## ⚠️ Disclaimer
 
-- This tool is for educational and productivity purposes. If it becomes sentient, it’s not my fault.
-- LLM answers are only as good as your data (and your API key).
-- No documents were harmed in the making of this agent (probably).
+- This tool is for educational and productivity purposes
+- AI responses are smart but not infallible (unlike me)
+- No documents were harmed in the making of this agent
+- Dark mode may cause addiction to superior UI experiences
+- Free API usage is subject to reasonable limits (don't abuse it)
 
 ---
 
-## 💌 Feedback
+## 💌 Feedback & Support
 
-Open an issue, send a PR, or just scream into the void. I might respond. Or not.
+- Open an issue on GitHub (I actually read them)
+- Email: dksdevansh@gmail.com (for serious stuff)
+- Or just scream into the void (therapeutic but less helpful)
 
 ---
 
-Enjoy! (Or don’t)
+## 🎉 Recent Changes (v2.0 Summary)
+
+### Major UI Overhaul:
+- **Complete redesign** with modern tabbed interface
+- **Dark/Light theme system** with persistent settings
+- **Enhanced file upload** with drag & drop and progress tracking
+- **Interactive chat interface** with conversation history
+- **Comprehensive settings panel** for customization
+
+### Functionality Improvements:
+- **Built-in API key** for immediate use
+- **Multiple AI model support** with easy switching
+- **Better error handling** and user feedback
+- **Auto-generated visualizations** with improved styling
+- **Session management** and data persistence
+
+### Developer Experience:
+- **Cleaner codebase** with better organization
+- **Improved CSS theming** with CSS variables
+- **Better responsive design** for different screen sizes
+- **Enhanced accessibility** with proper contrast ratios
+
+### What Changed:
+1. **From single page** → **5-tab interface** (Home, Upload, Chat, Analytics, Settings)
+2. **Basic styling** → **Professional dark/light themes**
+3. **Manual API setup** → **Built-in free API key**
+4. **Simple file upload** → **Drag & drop with progress tracking**
+5. **Basic Q&A** → **Interactive chat with memory**
+6. **Hidden settings** → **Dedicated settings panel**
+7. **Static UI** → **Dynamic, responsive interface**
+
+---
+
+Enjoy the new and improved document analysis experience! (Or don't, but at least it looks pretty now) 🚀
