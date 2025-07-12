@@ -1,5 +1,4 @@
-# Environment variables - Contains sensitive information
-.env
+
 
 # Python
 __pycache__/

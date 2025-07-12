@@ -1,5 +1,5 @@
 '''
-You have to use your own API key.
+If for privacy reason you don't trust the app use your own API key.
 Change the API key at ".env"
 If you can`t mail me at dksdevansh@gmail.com (I'll send you the key)
 '''
@@ -551,83 +551,731 @@ def create_streamlit_ui():
         }
     )
     
-    # Custom CSS for modern styling
-    st.markdown("""
+    # Initialize theme if not set
+    if 'theme_mode' not in st.session_state:
+        st.session_state.theme_mode = 'light'
+    
+    # Custom CSS for modern styling with theme support
+    theme_mode = st.session_state.theme_mode
+    
+    if theme_mode == 'dark':
+        css_theme = """
+        :root {
+            --bg-primary: #0e1117;
+            --bg-secondary: #262730;
+            --bg-tertiary: #3d3d3d;
+            --text-primary: #fafafa;
+            --text-secondary: #e0e0e0;
+            --accent-color: #667eea;
+            --accent-gradient: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            --border-color: #555555;
+            --card-bg: #262730;
+            --upload-bg: #1e1e2e;
+            --tab-bg: #262730;
+            --tab-selected: #667eea;
+        }
+        
+        .stApp {
+            background-color: var(--bg-primary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* Sidebar styling for dark mode - comprehensive */
+        .css-1d391kg, .css-1lcbmhc, .css-1y4p8pa, .css-k1vhr4, .css-18e3th9 {
+            background-color: var(--bg-secondary) !important;
+        }
+        
+        /* Sidebar - force all text elements to be visible */
+        .css-1d391kg, 
+        .css-1d391kg *,
+        .css-1d391kg div,
+        .css-1d391kg span,
+        .css-1d391kg p,
+        .css-1d391kg h1, .css-1d391kg h2, .css-1d391kg h3, 
+        .css-1d391kg h4, .css-1d391kg h5, .css-1d391kg h6,
+        .css-1d391kg label,
+        .css-1d391kg li,
+        .css-1d391kg .stMarkdown,
+        .css-1d391kg .stMarkdown *,
+        .css-1d391kg .stText,
+        .css-1d391kg .element-container,
+        .css-1d391kg .element-container *,
+        .css-1d391kg .block-container,
+        .css-1d391kg .block-container * {
+            color: var(--text-primary) !important;
+            background-color: var(--bg-secondary) !important;
+        }
+        
+        /* Sidebar specific elements */
+        .css-1d391kg .stMetric,
+        .css-1d391kg .stMetric *,
+        .css-1d391kg [data-testid="metric-container"],
+        .css-1d391kg [data-testid="metric-container"] * {
+            background-color: var(--bg-tertiary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* Sidebar buttons */
+        .css-1d391kg .stButton > button {
+            background-color: var(--bg-tertiary) !important;
+            color: var(--text-primary) !important;
+            border: 1px solid var(--border-color) !important;
+        }
+        
+        .css-1d391kg .stButton > button:hover {
+            background-color: var(--accent-color) !important;
+            color: white !important;
+        }
+        
+        /* Sidebar metrics */
+        .css-1d391kg .metric-container,
+        .css-1d391kg [data-testid="metric-container"] {
+            background-color: var(--card-bg) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* Sidebar expander */
+        .css-1d391kg .streamlit-expanderHeader,
+        .css-1d391kg .streamlit-expanderContent {
+            background-color: var(--bg-tertiary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* Main content area */
+        .main .block-container {
+            background-color: var(--bg-primary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* Force all text elements to be visible in dark mode */
+        h1, h2, h3, h4, h5, h6, p, div, span, label, li, strong, em, a {
+            color: var(--text-primary) !important;
+        }
+        
+        .stMarkdown, .stMarkdown p, .stMarkdown div, .stMarkdown span, .stMarkdown * {
+            color: var(--text-primary) !important;
+        }
+        
+        /* Sidebar specific overrides */
+        section[data-testid="stSidebar"] *,
+        section[data-testid="stSidebar"] div,
+        section[data-testid="stSidebar"] p,
+        section[data-testid="stSidebar"] span,
+        section[data-testid="stSidebar"] h1,
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3,
+        section[data-testid="stSidebar"] h4,
+        section[data-testid="stSidebar"] h5,
+        section[data-testid="stSidebar"] h6,
+        section[data-testid="stSidebar"] label,
+        section[data-testid="stSidebar"] strong {
+            color: var(--text-primary) !important;
+            background-color: var(--bg-secondary) !important;
+        }
+        
+        /* Input elements */
+        .stSelectbox > div > div {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+            border: 1px solid var(--border-color) !important;
+        }
+        
+        .stSelectbox > div > div > div {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* Dropdown options */
+        .stSelectbox > div > div > div > div {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* Selectbox dropdown menu - comprehensive styling */
+        .stSelectbox [data-baseweb="select"] > div {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+            border-color: var(--border-color) !important;
+        }
+        
+        /* Selectbox dropdown container */
+        .stSelectbox [data-baseweb="popover"] {
+            background-color: var(--bg-secondary) !important;
+        }
+        
+        /* Selectbox dropdown list */
+        .stSelectbox [data-baseweb="menu"] {
+            background-color: var(--bg-secondary) !important;
+            border: 1px solid var(--border-color) !important;
+        }
+        
+        /* Selectbox option items */
+        .stSelectbox [role="option"] {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        .stSelectbox [role="option"]:hover {
+            background-color: var(--accent-color) !important;
+            color: white !important;
+        }
+        
+        /* Selectbox selected value */
+        .stSelectbox [data-baseweb="select"] [data-baseweb="input"] {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* Selectbox label */
+        .stSelectbox label {
+            color: var(--text-primary) !important;
+            font-weight: bold !important;
+        }
+        
+        /* Additional selectbox styling for dropdown options */
+        .stSelectbox div[data-baseweb="select"] ul li {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        .stSelectbox div[data-baseweb="select"] ul li:hover {
+            background-color: var(--accent-color) !important;
+            color: white !important;
+        }
+        
+        /* Fix for dropdown text visibility */
+        .stSelectbox [data-testid="stSelectbox"] > div > div > div {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* Dropdown menu items styling */
+        .stSelectbox [data-testid="stSelectbox"] [role="listbox"] {
+            background-color: var(--bg-secondary) !important;
+            border: 1px solid var(--border-color) !important;
+        }
+        
+        .stSelectbox [data-testid="stSelectbox"] [role="listbox"] [role="option"] {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+            padding: 8px 12px !important;
+        }
+        
+        .stSelectbox [data-testid="stSelectbox"] [role="listbox"] [role="option"]:hover {
+            background-color: var(--accent-color) !important;
+            color: white !important;
+        }
+        
+        .stTextInput > div > div > input {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+            border-color: var(--border-color) !important;
+        }
+        
+        .stTextInput label {
+            color: var(--text-primary) !important;
+        }
+        
+        .stTextArea > div > div > textarea {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+            border-color: var(--border-color) !important;
+        }
+        
+        .stTextArea label {
+            color: var(--text-primary) !important;
+        }
+        
+        /* Metrics and info boxes */
+        .stMetric {
+            background-color: var(--card-bg) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        .stInfo, .stSuccess, .stWarning, .stError {
+            color: var(--text-primary) !important;
+        }
+        
+        /* File uploader */
+        .stFileUploader {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* Expander */
+        .streamlit-expanderHeader {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        .streamlit-expanderContent {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* DataFrame */
+        .stDataFrame {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* Progress bar container */
+        .stProgress > div > div {
+            background-color: var(--bg-secondary) !important;
+        }
+        
+        /* Additional emergency dropdown fix for dark mode */
+        .stSelectbox,
+        .stSelectbox *,
+        .stSelectbox div,
+        .stSelectbox span,
+        .stSelectbox p,
+        .stSelectbox label,
+        [data-testid="stSelectbox"],
+        [data-testid="stSelectbox"] *,
+        [data-testid="stSelectbox"] div,
+        [data-testid="stSelectbox"] span {
+            color: var(--text-primary) !important;
+        }
+        
+        /* Force dropdown background and text for all possible selectors */
+        .stSelectbox > div,
+        .stSelectbox > div > div,
+        .stSelectbox > div > div > div {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+        }
+        """
+    else:
+        css_theme = """
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8f9fa;
+            --bg-tertiary: #e9ecef;
+            --text-primary: #212529;
+            --text-secondary: #6c757d;
+            --accent-color: #667eea;
+            --accent-gradient: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            --border-color: #dee2e6;
+            --card-bg: #f8f9fa;
+            --upload-bg: #f8f9fa;
+            --tab-bg: #f0f2f6;
+            --tab-selected: #667eea;
+        }
+        
+        .stApp {
+            background-color: var(--bg-primary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* Sidebar styling for light mode */
+        .css-1d391kg, .css-1lcbmhc, .css-1y4p8pa, .css-k1vhr4, .css-18e3th9 {
+            background-color: var(--bg-secondary) !important;
+        }
+        
+        /* Sidebar container and all child elements */
+        .css-1d391kg, .css-1d391kg * {
+            color: var(--text-primary) !important;
+        }
+        
+        /* Text elements */
+        h1, h2, h3, h4, h5, h6, p, div, span, label {
+            color: var(--text-primary) !important;
+        }
+        
+        .stMarkdown, .stMarkdown p, .stMarkdown div {
+            color: var(--text-primary) !important;
+        }
+        
+        /* Light mode selectbox styling */
+        .stSelectbox > div > div {
+            background-color: white !important;
+            color: var(--text-primary) !important;
+            border: 1px solid var(--border-color) !important;
+        }
+        
+        .stSelectbox label {
+            color: var(--text-primary) !important;
+            font-weight: bold !important;
+        }
+        
+        /* Light mode dropdown options */
+        .stSelectbox div[role="listbox"] {
+            background-color: white !important;
+            border: 1px solid var(--border-color) !important;
+        }
+        
+        .stSelectbox div[role="option"] {
+            background-color: white !important;
+            color: var(--text-primary) !important;
+        }
+        
+        .stSelectbox div[role="option"]:hover {
+            background-color: var(--accent-color) !important;
+            color: white !important;
+        }
+        """
+    
+    st.markdown(f"""
     <style>
+    {css_theme}
+    
     /* Main styling */
-    .main-header {
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    .main-header {{
+        background: var(--accent-gradient);
         padding: 2rem;
         border-radius: 10px;
         color: white;
         text-align: center;
         margin-bottom: 2rem;
-    }
+    }}
     
-    .feature-card {
-        background: #f8f9fa;
+    .feature-card {{
+        background: var(--card-bg);
         padding: 1.5rem;
         border-radius: 10px;
-        border-left: 4px solid #667eea;
+        border-left: 4px solid var(--accent-color);
         margin: 1rem 0;
-    }
+        color: var(--text-primary);
+    }}
     
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    .metric-card {{
+        background: var(--accent-gradient);
         color: white;
         padding: 1rem;
         border-radius: 8px;
         text-align: center;
         margin: 0.5rem;
-    }
+    }}
     
-    .upload-zone {
-        border: 2px dashed #667eea;
+    .upload-zone {{
+        border: 2px dashed var(--accent-color);
         border-radius: 10px;
         padding: 2rem;
         text-align: center;
-        background: #f8f9fa;
+        background: var(--upload-bg);
         margin: 1rem 0;
-    }
+        color: var(--text-primary);
+    }}
     
-    .chat-container {
-        background: white;
+    .chat-container {{
+        background: var(--card-bg);
         border-radius: 10px;
         padding: 1rem;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
+        color: var(--text-primary);
+    }}
+    
+    .theme-toggle {{
+        background: var(--accent-gradient);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        border: none;
+        cursor: pointer;
+        margin: 0.5rem;
+    }}
     
     /* Tab styling */
-    .stTabs [data-baseweb="tab-list"] {
+    .stTabs [data-baseweb="tab-list"] {{
         gap: 2px;
-    }
+    }}
     
-    .stTabs [data-baseweb="tab"] {
+    .stTabs [data-baseweb="tab"] {{
         height: 50px;
         padding-left: 20px;
         padding-right: 20px;
-        background-color: #f0f2f6;
+        background-color: var(--tab-bg) !important;
         border-radius: 10px 10px 0 0;
-    }
+        color: var(--text-primary) !important;
+    }}
     
-    .stTabs [aria-selected="true"] {
-        background-color: #667eea;
-        color: white;
-    }
+    .stTabs [aria-selected="true"] {{
+        background-color: var(--tab-selected) !important;
+        color: white !important;
+    }}
+    
+    /* Enhanced Sidebar styling */
+    .css-1d391kg, .css-1lcbmhc, .css-1y4p8pa {{
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Universal selectbox styling for all themes */
+    .stSelectbox {{
+        color: var(--text-primary) !important;
+    }}
+    
+    .stSelectbox > div {{
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+    }}
+    
+    .stSelectbox > div > div {{
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+        border: 1px solid var(--border-color) !important;
+    }}
+    
+    /* Dropdown options styling */
+    .stSelectbox div[role="listbox"] {{
+        background-color: var(--bg-secondary) !important;
+        border: 1px solid var(--border-color) !important;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2) !important;
+    }}
+    
+    .stSelectbox div[role="option"] {{
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+        padding: 8px 12px !important;
+    }}
+    
+    .stSelectbox div[role="option"]:hover {{
+        background-color: var(--accent-color) !important;
+        color: white !important;
+    }}
+    
+    /* Force visibility for all selectbox text */
+    .stSelectbox * {{
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Additional comprehensive selectbox styling */
+    .stSelectbox [data-baseweb="select"] {{
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+        border: 1px solid var(--border-color) !important;
+    }}
+    
+    /* Dropdown popover styling */
+    [data-baseweb="popover"] .stSelectbox,
+    [data-baseweb="popover"] [data-baseweb="menu"] {{
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+        border: 1px solid var(--border-color) !important;
+    }}
+    
+    /* Ensure all dropdown text is visible */
+    .stSelectbox [data-baseweb="select"] div,
+    .stSelectbox [data-baseweb="menu"] div,
+    .stSelectbox [data-baseweb="menu"] span,
+    .stSelectbox [role="option"] span,
+    .stSelectbox [role="option"] div {{
+        color: var(--text-primary) !important;
+        background-color: var(--bg-secondary) !important;
+    }}
+    
+    /* Fix for dropdown arrow and controls */
+    .stSelectbox [data-baseweb="select"] svg {{
+        fill: var(--text-primary) !important;
+    }}
+    
+    /* Comprehensive option styling */
+    .stSelectbox [role="option"],
+    .stSelectbox [data-baseweb="menu"] li,
+    .stSelectbox ul li {{
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+        padding: 8px 12px !important;
+    }}
+    
+    .stSelectbox [role="option"]:hover,
+    .stSelectbox [data-baseweb="menu"] li:hover,
+    .stSelectbox ul li:hover {{
+        background-color: var(--accent-color) !important;
+        color: white !important;
+    }}
+    
+    /* Sidebar text elements */
+    .css-1d391kg h1, .css-1d391kg h2, .css-1d391kg h3, 
+    .css-1d391kg h4, .css-1d391kg h5, .css-1d391kg h6,
+    .css-1d391kg p, .css-1d391kg div, .css-1d391kg span,
+    .css-1d391kg label, .css-1d391kg .stMarkdown {{
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Sidebar buttons */
+    .css-1d391kg .stButton > button {{
+        color: var(--text-primary) !important;
+        border-color: var(--border-color) !important;
+    }}
+    
+    /* Sidebar metrics */
+    .css-1d391kg .metric-container {{
+        background-color: var(--card-bg) !important;
+        color: var(--text-primary) !important;
+    }}
+    
+    /* General text improvements */
+    .stText, .stCaption, .stCode {{
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Button styling */
+    .stButton > button {{
+        color: var(--text-primary) !important;
+        background-color: var(--bg-secondary) !important;
+        border-color: var(--border-color) !important;
+    }}
+    
+    .stButton > button:hover {{
+        color: var(--text-primary) !important;
+        border-color: var(--accent-color) !important;
+    }}
+    
+    /* Slider styling */
+    .stSlider {{
+        color: var(--text-primary) !important;
+    }}
+    
+    .stSlider label {{
+        color: var(--text-primary) !important;
+    }}
     
     /* Hide default streamlit styling */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
+    #MainMenu {{visibility: hidden;}}
+    footer {{visibility: hidden;}}
+    header {{visibility: hidden;}}
+    
+    /* Additional dark mode support */
+    .stContainer {{
+        background-color: var(--bg-primary) !important;
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Fix for spinner and loading elements */
+    .stSpinner {{
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Fix for code blocks */
+    .stCodeBlock {{
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Fix for alerts and messages */
+    .stAlert {{
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Fix for columns */
+    .css-ocqkz7 {{
+        background-color: var(--bg-primary) !important;
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Fix for expander headers in dark mode */
+    .streamlit-expanderHeader p {{
+        color: var(--text-primary) !important;
+    }}
+    
+    .streamlit-expanderContent .stMarkdown {{
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Additional BaseWeb dropdown fixes */
+    [data-baseweb="select"] {{
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+    }}
+    
+    [data-baseweb="menu"] {{
+        background-color: var(--bg-secondary) !important;
+        border: 1px solid var(--border-color) !important;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.3) !important;
+    }}
+    
+    [data-baseweb="menu"] [role="option"] {{
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+        padding: 12px 16px !important;
+    }}
+    
+    [data-baseweb="menu"] [role="option"]:hover {{
+        background-color: var(--accent-color) !important;
+        color: white !important;
+    }}
+    
+    /* Dropdown input field */
+    [data-baseweb="select"] input {{
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Selected value display */
+    [data-baseweb="select"] [data-baseweb="input"] {{
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Dropdown container */
+    [data-baseweb="popover"] {{
+        background-color: var(--bg-secondary) !important;
+    }}
+    
+    /* Fix any remaining invisible text */
+    .stSelectbox span,
+    .stSelectbox div,
+    [data-baseweb="select"] span,
+    [data-baseweb="menu"] span {{
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Ultra-aggressive dropdown text fix */
+    .stSelectbox * {{
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Force all dropdown elements to be visible */
+    div[role="listbox"],
+    div[role="listbox"] *,
+    div[role="option"],
+    div[role="option"] *,
+    [data-baseweb="menu"],
+    [data-baseweb="menu"] *,
+    [data-baseweb="select"],
+    [data-baseweb="select"] * {{
+        color: var(--text-primary) !important;
+        background-color: var(--bg-secondary) !important;
+    }}
+    
+    /* Specific fix for Streamlit selectbox in all states */
+    .stSelectbox [data-value],
+    .stSelectbox [data-value] *,
+    .stSelectbox .st-emotion-cache-1p0byqe,
+    .stSelectbox .st-emotion-cache-1p0byqe * {{
+        color: var(--text-primary) !important;
+        background-color: var(--bg-secondary) !important;
+    }}
+    
+    /* Override any inherited text colors */
+    .stSelectbox > div > div > div,
+    .stSelectbox > div > div > div *,
+    .stSelectbox ul,
+    .stSelectbox ul *,
+    .stSelectbox li,
+    .stSelectbox li * {{
+        color: var(--text-primary) !important;
+    }}
+    
+    /* Final fallback for any missed elements */
+    [data-testid*="selectbox"] *,
+    [class*="selectbox"] *,
+    [class*="dropdown"] *,
+    [class*="menu"] * {{
+        color: var(--text-primary) !important;
+    }}
     </style>
     """, unsafe_allow_html=True)
     
-    # Modern Header with gradient
-    st.markdown("""
+    # Modern Header with gradient and theme indicator
+    theme_indicator = "🌙" if st.session_state.theme_mode == 'dark' else "☀️"
+    st.markdown(f"""
     <div class="main-header">
-        <h1>🤖 AI Document Analyst</h1>
+        <h1>🤖 AI Document Analyst {theme_indicator}</h1>
         <p style="font-size: 1.2em; margin: 0;">Transform your documents into actionable insights with AI</p>
-        <p style="opacity: 0.9; margin: 0.5rem 0 0 0;">Built by Devansh Singh | Powered by Meta Llama & Together AI</p>
+        <p style="opacity: 0.9; margin: 0.5rem 0 0 0;">Built by Devansh Singh | Powered by Meta Llama & Together AI | {st.session_state.theme_mode.title()} Mode</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -656,8 +1304,30 @@ def create_streamlit_ui():
     
     agent = st.session_state.agent
     
-    # Sidebar for file management
+    # Sidebar for file management and quick info
     with st.sidebar:
+        # Theme Toggle at the top
+        st.markdown("### 🎨 Theme")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("☀️ Light", 
+                        type="primary" if st.session_state.theme_mode == 'light' else "secondary",
+                        use_container_width=True,
+                        key="light_theme"):
+                st.session_state.theme_mode = 'light'
+                st.rerun()
+        
+        with col2:
+            if st.button("🌙 Dark", 
+                        type="primary" if st.session_state.theme_mode == 'dark' else "secondary",
+                        use_container_width=True,
+                        key="dark_theme"):
+                st.session_state.theme_mode = 'dark'
+                st.rerun()
+        
+        st.markdown("---")
+        
         st.markdown("### 🛠️ Control Panel")
         
         # Quick stats if files are processed
@@ -914,7 +1584,7 @@ def create_streamlit_ui():
             <div class="upload-zone">
                 <h3>📁 Drop your documents here!</h3>
                 <p>Supported formats: PDF, DOCX, TXT, CSV, Excel, Images</p>
-                <p>Use the file uploader in the sidebar to get started →</p>
+                <p>Use the file uploader above to get started ⬆️</p>
             </div>
             """, unsafe_allow_html=True)
             
@@ -1294,6 +1964,100 @@ def create_streamlit_ui():
             - Can process images
             - Multimodal capabilities
             - Text + image understanding
+            """)
+        
+        st.markdown("---")
+        
+        # Theme Configuration Section
+        st.markdown("### 🎨 Theme & Appearance")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            st.markdown(f"**Current Theme:** {st.session_state.theme_mode.title()} Mode")
+            
+            # Theme selection
+            theme_options = {
+                'light': {
+                    'name': '☀️ Light Mode',
+                    'description': 'Clean, bright interface with white backgrounds',
+                    'preview': '🤍 White backgrounds, dark text'
+                },
+                'dark': {
+                    'name': '🌙 Dark Mode',
+                    'description': 'Modern dark interface, easier on the eyes',
+                    'preview': '🖤 Dark backgrounds, light text'
+                }
+            }
+            
+            selected_theme = st.selectbox(
+                "Choose Theme:",
+                options=list(theme_options.keys()),
+                format_func=lambda x: theme_options[x]["name"],
+                index=0 if st.session_state.theme_mode == 'light' else 1,
+                help="Select your preferred visual theme"
+            )
+            
+            # Show theme details
+            if selected_theme:
+                theme_info = theme_options[selected_theme]
+                st.markdown(f"""
+                **Theme Details:**
+                - **Description:** {theme_info['description']}
+                - **Preview:** {theme_info['preview']}
+                """)
+            
+            # Apply theme change
+            col_a, col_b = st.columns([1, 1])
+            with col_a:
+                if st.button("🎨 Apply Theme", type="primary", use_container_width=True):
+                    if selected_theme != st.session_state.theme_mode:
+                        st.session_state.theme_mode = selected_theme
+                        st.success(f"✅ Theme changed to: {theme_options[selected_theme]['name']}")
+                        st.rerun()
+                    else:
+                        st.info("Theme is already selected")
+            
+            with col_b:
+                if st.button("🔄 Reset to Default", use_container_width=True):
+                    st.session_state.theme_mode = 'light'
+                    st.success("✅ Theme reset to Light Mode!")
+                    st.rerun()
+        
+        with col2:
+            st.markdown("#### 🎨 Theme Preview")
+            
+            # Theme preview cards
+            if st.session_state.theme_mode == 'dark':
+                st.markdown("""
+                <div style="background: #2d2d2d; color: white; padding: 1rem; border-radius: 8px; margin: 0.5rem 0;">
+                    <strong>🌙 Dark Mode Active</strong><br>
+                    • Reduced eye strain<br>
+                    • Better for low light<br>
+                    • Modern appearance
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div style="background: #f8f9fa; color: black; padding: 1rem; border-radius: 8px; margin: 0.5rem 0; border: 1px solid #dee2e6;">
+                    <strong>☀️ Light Mode Active</strong><br>
+                    • Classic clean look<br>
+                    • High contrast text<br>
+                    • Professional appearance
+                </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("#### 💡 Theme Tips")
+            st.markdown("""
+            **🌙 Dark Mode Benefits:**
+            - Reduces eye strain in low light
+            - Saves battery on OLED screens
+            - Modern, sleek appearance
+            
+            **☀️ Light Mode Benefits:**
+            - Better readability in bright environments
+            - Classic, professional look
+            - Higher contrast for text
             """)
         
         st.markdown("---")
