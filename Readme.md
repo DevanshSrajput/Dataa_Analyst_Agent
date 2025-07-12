@@ -42,16 +42,14 @@ All this, wrapped in a gorgeous Streamlit UI with tabs, themes, and more bells a
 <table>
 <tr>
 <td align="center"><img src="Assests/v2/Home.png" width="400"><br><b>🏠 Home Dashboard</b></td>
-</tr>
-<tr>
 <td align="center"><img src="Assests/v2/U&P.png" width="400"><br><b>📤 Upload & Process</b></td>
+</tr>
+<tr>
 <td align="center"><img src="Assests/v2/U&P-2.png" width="400"><br><b>📊 File Processing</b></td>
-</tr>
-<tr>
 <td align="center"><img src="Assests/v2/chat.png" width="400"><br><b>💬 AI Chat Interface</b></td>
-<td align="center"><img src="Assests/v2/chat-2.png" width="400"><br><b>🤖 Chat Conversation</b></td>
 </tr>
 <tr>
+<td align="center"><img src="Assests/v2/chat-2.png" width="400"><br><b>🤖 Chat Conversation</b></td>
 <td align="center"><img src="Assests/v2/Analytics.png" width="400"><br><b>📊 Analytics Dashboard</b></td>
 </tr>
 <tr>
