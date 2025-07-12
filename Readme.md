@@ -35,12 +35,17 @@ All this, wrapped in a gorgeous Streamlit UI with tabs, themes, and more bells a
 ---
 
 ## 📸 Screenshots
-> Glimpses! So you know it actually works 😁 
 
-<img src="Assests/v2/Dashboard.png"> 
-<img src="Assests/v2/Dark_Mode.png"> 
-<img src="Assests/v2/Upload_Process.png">
-<img src="Assests/v2/Chat_Interface.png">
+> Glimpses! So you know it actually works 😁
+
+<img src="Assests/v2/Home.png" width="400"> 
+<img src="Assests/v2/U&P.png" width="400"> 
+<img src="Assests/v2/U&P-2.png" width="400">
+<img src="Assests/v2/chat.png" width="400">
+<img src="Assests/v2/chat-2.png" width="400">
+<img src="Assests/v2/Analytics.png" width="400">
+<img src="Assests/v2/Settings.png" width="400">
+<img src="Assests/v2/settings-2.png" width="400">
 
 > The UI may differ slightly if I decided to tweak it and forgot to update screenshots. JK! (But seriously, it might.)
 
@@ -49,11 +54,13 @@ All this, wrapped in a gorgeous Streamlit UI with tabs, themes, and more bells a
 ## 🚀 Features (Because You're Too Busy to Read the Code)
 
 ### 🏠 **Home Tab**
+
 - Welcome dashboard with feature overview
 - Quick start guide (for the impatient)
 - Status indicators (so you know things are working)
 
 ### 📤 **Upload & Process Tab**
+
 - **Multi-format Support:** PDF, DOCX, TXT, CSV, XLSX, JPG, PNG, and more
 - **Drag & Drop Interface:** Because clicking is so 2010
 - **Real-time Processing:** Watch your files get analyzed in real-time
@@ -61,18 +68,21 @@ All this, wrapped in a gorgeous Streamlit UI with tabs, themes, and more bells a
 - **Auto-Visualization:** Charts generate themselves (like magic, but with code)
 
 ### 💬 **AI Chat Tab**
+
 - **Conversational Q&A:** Ask anything about your documents
 - **Context Awareness:** Remembers your conversation (better than most humans)
 - **Quick Questions:** Pre-built buttons for instant insights
 - **Smart Responses:** Powered by Meta Llama models via Together AI
 
 ### 📊 **Analytics Tab**
+
 - **Statistical Summaries:** Mean, median, mode, and other math-y things
 - **Data Quality Checks:** Missing values, duplicates, outliers
 - **Correlation Analysis:** Find relationships you never knew existed
 - **Auto-Generated Charts:** Histograms, heatmaps, box plots, and more
 
 ### ⚙️ **Settings Tab**
+
 - **API Key Management:** Built-in key configuration (no more .env hunting)
 - **Model Selection:** Choose from multiple AI models
 - **Theme Switching:** Light/Dark mode toggle
@@ -104,10 +114,12 @@ streamlit run Data_Analyst_Agent.py
 ```
 
 ### 3. **Open Your Browser:**
+
 - The app will automatically open at `http://localhost:8502`
 - If it doesn't, manually navigate there (I can't click for you)
 
 ### 4. **Start Analyzing:**
+
 - The app includes a **free API key** (yes, FREE!)
 - Just upload your files and start chatting
 - No complicated setup required
@@ -117,6 +129,7 @@ streamlit run Data_Analyst_Agent.py
 ## 🔑 API Key (Now 100% Free!)
 
 **Good news!** I've decided to be generous and provide my own Together AI API key with the app. Why? Because:
+
 - Together AI is essentially free for reasonable usage
 - You shouldn't have to jump through hoops to try this
 - I'm feeling charitable (it happens sometimes)
@@ -128,6 +141,7 @@ streamlit run Data_Analyst_Agent.py
 3. Or set it as an environment variable: `TOGETHER_API_KEY=your_key_here`
 
 ### Available AI Models:
+
 - **Llama 3.1 8B Turbo** (Recommended - fast and efficient)
 - **Llama 3.1 70B Turbo** (Powerful - for when you need the big guns)
 - **Llama 3.2 11B Vision** (Multimodal - can see your images)
@@ -165,6 +179,7 @@ streamlit run Data_Analyst_Agent.py
 If you encounter any errors (because software is never perfect):
 
 ### Numpy/Pandas Issues:
+
 ```bash
 pip uninstall numpy pandas -y
 pip install numpy==1.24.3
@@ -173,11 +188,13 @@ pip install -r requirements.txt
 ```
 
 ### Streamlit Issues:
+
 ```bash
 pip install --upgrade streamlit
 ```
 
 ### API Issues:
+
 - The built-in API key should work automatically
 - If not, get your own from [Together AI](https://api.together.xyz/)
 - Add it in the Settings tab or as an environment variable
@@ -189,6 +206,7 @@ pip install --upgrade streamlit
 Made with excessive amounts of coffee, determination, and a healthy dose of sarcasm by **Devansh Singh**.
 
 Special thanks to:
+
 - **Together AI** for their awesome API
 - **Streamlit** for making beautiful UIs possible
 - **Meta** for Llama models that actually work
@@ -217,6 +235,7 @@ Special thanks to:
 ## 🎉 Recent Changes (v2.0 Summary)
 
 ### Major UI Overhaul:
+
 - **Complete redesign** with modern tabbed interface
 - **Dark/Light theme system** with persistent settings
 - **Enhanced file upload** with drag & drop and progress tracking
@@ -224,6 +243,7 @@ Special thanks to:
 - **Comprehensive settings panel** for customization
 
 ### Functionality Improvements:
+
 - **Built-in API key** for immediate use
 - **Multiple AI model support** with easy switching
 - **Better error handling** and user feedback
@@ -231,12 +251,14 @@ Special thanks to:
 - **Session management** and data persistence
 
 ### Developer Experience:
+
 - **Cleaner codebase** with better organization
 - **Improved CSS theming** with CSS variables
 - **Better responsive design** for different screen sizes
 - **Enhanced accessibility** with proper contrast ratios
 
 ### What Changed:
+
 1. **From single page** → **5-tab interface** (Home, Upload, Chat, Analytics, Settings)
 2. **Basic styling** → **Professional dark/light themes**
 3. **Manual API setup** → **Built-in free API key**
