@@ -1,7 +1,7 @@
 '''
 If for privacy reason you don't trust the app use your own API key.
 Change the API key at ".env"
-If you can`t mail me at dksdevansh@gmail.com (I'll send you the key)
+If you can`t contact the team at support@archusers.com (we'll send you the key)
 '''
 
 import os
@@ -50,10 +50,18 @@ try:
     from PIL import Image
     import pytesseract
     import requests
-    from together import Together
+    import openai
+    import re
+    import spacy
+    from datetime import datetime, timedelta
+    import hashlib
+    from dataclasses import dataclass
+    from enum import Enum
+    import difflib
 except ImportError as e:
     print(f"Error importing file processing libraries: {e}")
-    print("Please run: pip install PyPDF2 python-docx Pillow pytesseract requests together")
+    print("Please run: pip install PyPDF2 python-docx Pillow pytesseract requests openai")
+    print("Also run: python -m spacy download en_core_web_sm")
     sys.exit(1)
 
 # UI imports
@@ -72,18 +80,64 @@ class DocumentAnalystAgent:
     """
     
     def __init__(self, api_key: str):
-        
-        self.client = Together(api_key=api_key)
-        # Using a more accessible model with higher rate limits
-        self.model = "meta-llama/Llama-3.1-8B-Instruct-Turbo"
-        self.document_content = {}
-        self.data_frames = {}
-        self.analysis_results = {}
-        self.conversation_history = []
-        
-        # Set up plotting style
-        plt.style.use('default')
-        sns.set_palette("husl")
+        try:
+            if not api_key or api_key.strip() == "":
+                raise ValueError("API key cannot be empty")
+            
+            # Initialize OpenRouter client
+            self.client = openai.OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=api_key,
+            )
+            
+            # Set default model - using a reliable free model
+            self.model = os.getenv('DEFAULT_MODEL', 'meta-llama/llama-3.1-8b-instruct:free')
+            self.backup_model = os.getenv('BACKUP_MODEL', 'openai/gpt-4o-mini')
+            
+            self.document_content = {}
+            self.data_frames = {}
+            self.analysis_results = {}
+            self.conversation_history = []
+            
+            # Initialize legal analyzer
+            self.legal_analyzer = LegalDocumentAnalyzer(api_key)
+            self.legal_analysis_results = {}
+            self.security_manager = LegalSecurityManager()
+            
+            # Set up plotting style
+            plt.style.use('default')
+            sns.set_palette("husl")
+            
+            # Test API connection
+            self._test_api_connection()
+            
+        except Exception as e:
+            raise Exception(f"Failed to initialize DocumentAnalystAgent: {str(e)}")
+    
+    def _test_api_connection(self):
+        """Test API connection with a minimal request"""
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": "Test"}],
+                max_tokens=5,
+                temperature=0.1
+            )
+            return True
+        except Exception as e:
+            # Try backup model if primary fails
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.backup_model,
+                    messages=[{"role": "user", "content": "Test"}],
+                    max_tokens=5,
+                    temperature=0.1
+                )
+                self.model = self.backup_model  # Switch to backup model
+                print(f"Primary model failed, switched to backup model: {self.backup_model}")
+                return True
+            except Exception as backup_error:
+                raise Exception(f"API connection test failed for both models. Primary: {str(e)}, Backup: {str(backup_error)}")
     
     def extract_text_from_pdf(self, file_path: str) -> str:
         """Extract text from PDF file"""
@@ -171,6 +225,15 @@ class DocumentAnalystAgent:
             
             # Generate initial summary
             result['summary'] = self.generate_document_summary(result)
+            
+            # Perform legal analysis if document contains legal content
+            if self.is_legal_document(result['content']):
+                legal_analysis = self.legal_analyzer.analyze_legal_document(
+                    result['content'], 
+                    self.detect_legal_document_type(result['content'])
+                )
+                result['legal_analysis'] = legal_analysis
+                self.legal_analysis_results[file_name] = legal_analysis
             
             return result
             
@@ -511,6 +574,9 @@ class DocumentAnalystAgent:
         
         for attempt in range(max_retries):
             try:
+                if not self.client:
+                    return "API client not initialized properly"
+                
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
@@ -523,6 +589,8 @@ class DocumentAnalystAgent:
                 
             except Exception as e:
                 error_str = str(e)
+                print(f"API call error (attempt {attempt + 1}/{max_retries}): {error_str}")
+                
                 if "rate limit" in error_str.lower() or "429" in error_str:
                     wait_time = (2 ** attempt) * 30  # Exponential backoff: 30s, 60s, 120s
                     print(f"Rate limit hit. Waiting {wait_time} seconds before retry {attempt + 1}/{max_retries}...")
@@ -530,11 +598,742 @@ class DocumentAnalystAgent:
                     
                     if attempt == max_retries - 1:
                         return f"Rate limit exceeded. Please try again in a few minutes. Error: {error_str}"
+                elif "authentication" in error_str.lower() or "unauthorized" in error_str.lower() or "401" in error_str:
+                    return f"Authentication Error: Please check your API key. Error: {error_str}"
+                elif "invalid" in error_str.lower() and "model" in error_str.lower():
+                    return f"Model Error: The model '{self.model}' may not be available. Error: {error_str}"
                 else:
-                    # For non-rate-limit errors, don't retry
-                    return f"API Error: {error_str}"
+                    # For other errors, wait a bit before retrying if we have retries left
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 5  # 5s, 10s, 15s
+                        print(f"General error, waiting {wait_time}s before retry...")
+                        time.sleep(wait_time)
+                    else:
+                        return f"API Error: {error_str}"
         
         return "Maximum retries exceeded. Please try again later."
+    
+    def is_legal_document(self, content: str) -> bool:
+        """Detect if document contains legal content"""
+        legal_indicators = [
+            'agreement', 'contract', 'party', 'whereas', 'plaintiff', 'defendant', 
+            'court', 'statute', 'regulation', 'cfr', 'usc', 'whereas', 'breach',
+            'liability', 'indemnification', 'termination', 'compliance', 'legal',
+            'attorney', 'counsel', 'jurisdiction', 'patent', 'copyright', 'trademark'
+        ]
+        
+        content_lower = content.lower()
+        legal_term_count = sum(1 for term in legal_indicators if term in content_lower)
+        
+        # If more than 3 legal terms found, consider it a legal document
+        return legal_term_count >= 3
+    
+    def detect_legal_document_type(self, content: str) -> str:
+        """Detect the specific type of legal document"""
+        return self.legal_analyzer.classify_legal_document(content)
+    
+    def perform_legal_analysis(self, file_name: str) -> Dict[str, Any]:
+        """Perform comprehensive legal analysis on a document"""
+        if file_name not in self.document_content:
+            return {"error": "Document not found"}
+        
+        content = self.document_content[file_name]['content']
+        return self.legal_analyzer.analyze_legal_document(content)
+    
+    def compare_legal_documents(self, file1: str, file2: str) -> Dict[str, Any]:
+        """Compare two legal documents for differences"""
+        if file1 not in self.document_content or file2 not in self.document_content:
+            return {"error": "One or both documents not found"}
+        
+        content1 = self.document_content[file1]['content']
+        content2 = self.document_content[file2]['content']
+        
+        return self.legal_analyzer.compare_legal_documents(content1, content2)
+    
+    def extract_legal_summary(self, file_name: str) -> str:
+        """Generate a legal-focused summary"""
+        if file_name not in self.legal_analysis_results:
+            return "No legal analysis available for this document"
+        
+        analysis = self.legal_analysis_results[file_name]
+        
+        summary_parts = []
+        summary_parts.append(f"Document Type: {analysis.get('document_type', 'Unknown')}")
+        
+        if analysis.get('risk_assessment'):
+            risk = analysis['risk_assessment']
+            summary_parts.append(f"Risk Level: {risk.get('overall_risk', 'Unknown')}")
+        
+        if analysis.get('entities'):
+            entities = analysis['entities'][:3]  # Top 3 entities
+            entity_names = [e.name for e in entities]
+            summary_parts.append(f"Key Parties: {', '.join(entity_names)}")
+        
+        if analysis.get('key_obligations'):
+            obligations = analysis['key_obligations'][:2]  # Top 2 obligations
+            summary_parts.append(f"Key Obligations: {'; '.join(obligations)}")
+        
+        return '\n'.join(summary_parts)
+    
+    def create_legal_visualizations(self, file_name: str) -> List[str]:
+        """Create legal-specific visualizations"""
+        if file_name not in self.legal_analysis_results:
+            return []
+        
+        analysis = self.legal_analysis_results[file_name]
+        visualization_paths = []
+        
+        try:
+            output_dir = f"legal_visualizations_{file_name.replace('.', '_')}"
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # 1. Risk Assessment Chart
+            if analysis.get('risk_assessment'):
+                risk_data = analysis['risk_assessment']
+                risk_factors = risk_data.get('risk_factors', [])
+                
+                if risk_factors:
+                    risk_levels = [factor['level'] for factor in risk_factors]
+                    risk_counts = {'high': 0, 'medium': 0, 'low': 0}
+                    
+                    for level in risk_levels:
+                        risk_counts[level] += 1
+                    
+                    plt.figure(figsize=(10, 6))
+                    colors = ['red', 'orange', 'green']
+                    plt.bar(risk_counts.keys(), risk_counts.values(), color=colors)
+                    plt.title('Legal Risk Assessment')
+                    plt.xlabel('Risk Level')
+                    plt.ylabel('Number of Risk Factors')
+                    
+                    risk_path = os.path.join(output_dir, 'risk_assessment.png')
+                    plt.savefig(risk_path, dpi=300, bbox_inches='tight')
+                    plt.close()
+                    visualization_paths.append(risk_path)
+            
+            # 2. Entity Relationship Chart
+            if analysis.get('entities'):
+                entities = analysis['entities']
+                entity_types = {}
+                
+                for entity in entities:
+                    entity_type = entity.entity_type
+                    if entity_type in entity_types:
+                        entity_types[entity_type] += 1
+                    else:
+                        entity_types[entity_type] = 1
+                
+                if entity_types:
+                    plt.figure(figsize=(8, 8))
+                    plt.pie(entity_types.values(), labels=entity_types.keys(), autopct='%1.1f%%')
+                    plt.title('Legal Entities Distribution')
+                    
+                    entities_path = os.path.join(output_dir, 'entities_distribution.png')
+                    plt.savefig(entities_path, dpi=300, bbox_inches='tight')
+                    plt.close()
+                    visualization_paths.append(entities_path)
+            
+            # 3. Compliance Score Gauge
+            if analysis.get('compliance_check'):
+                compliance = analysis['compliance_check']
+                score = compliance.get('score', 0)
+                
+                fig, ax = plt.subplots(figsize=(8, 6))
+                
+                # Create gauge chart
+                theta = np.linspace(0, np.pi, 100)
+                r = np.ones_like(theta)
+                
+                ax = plt.subplot(111, polar=True)
+                ax.plot(theta, r, color='lightgray', linewidth=10)
+                
+                # Color based on score
+                if score >= 80:
+                    color = 'green'
+                elif score >= 60:
+                    color = 'orange'
+                else:
+                    color = 'red'
+                
+                score_theta = np.linspace(0, np.pi * (score / 100), 50)
+                ax.plot(score_theta, np.ones_like(score_theta), color=color, linewidth=10)
+                
+                ax.set_ylim(0, 1.2)
+                ax.set_title(f'Compliance Score: {score}%', pad=20)
+                ax.set_rticks([])
+                ax.set_thetagrids([0, 45, 90, 135, 180], ['0%', '25%', '50%', '75%', '100%'])
+                
+                compliance_path = os.path.join(output_dir, 'compliance_score.png')
+                plt.savefig(compliance_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                visualization_paths.append(compliance_path)
+            
+            # 4. Timeline Visualization
+            if analysis.get('dates'):
+                dates = analysis['dates']
+                
+                if dates:
+                    plt.figure(figsize=(12, 6))
+                    
+                    date_types = [date.date_type for date in dates]
+                    importance_levels = [date.importance for date in dates]
+                    
+                    # Create timeline
+                    y_pos = range(len(dates))
+                    colors = ['red' if imp == 'critical' else 'orange' if imp == 'important' else 'blue' 
+                             for imp in importance_levels]
+                    
+                    plt.barh(y_pos, [1] * len(dates), color=colors)
+                    plt.yticks(y_pos, [f"{date.date_type}: {date.date_text}" for date in dates])
+                    plt.xlabel('Timeline')
+                    plt.title('Legal Dates and Deadlines')
+                    
+                    timeline_path = os.path.join(output_dir, 'legal_timeline.png')
+                    plt.savefig(timeline_path, dpi=300, bbox_inches='tight')
+                    plt.close()
+                    visualization_paths.append(timeline_path)
+            
+        except Exception as e:
+            print(f"Error creating legal visualizations: {str(e)}")
+        
+        return visualization_paths
+    
+    def generate_legal_report(self, file_name: str) -> str:
+        """Generate comprehensive legal analysis report"""
+        if file_name not in self.legal_analysis_results:
+            return "No legal analysis available for this document"
+        
+        analysis = self.legal_analysis_results[file_name]
+        
+        try:
+            report_prompt = f"""
+            Generate a comprehensive legal analysis report based on the following analysis:
+            
+            Document: {file_name}
+            Document Type: {analysis.get('document_type', 'Unknown')}
+            
+            Risk Assessment: {analysis.get('risk_assessment', {})}
+            Entities Found: {len(analysis.get('entities', []))}
+            Citations Found: {len(analysis.get('citations', []))}
+            Legal Clauses: {len(analysis.get('clauses', []))}
+            Key Obligations: {analysis.get('key_obligations', [])}
+            Compliance Score: {analysis.get('compliance_check', {}).get('score', 'N/A')}
+            
+            Plain English Summary: {analysis.get('plain_english_summary', '')}
+            
+            Please provide:
+            1. Executive Summary
+            2. Legal Risk Analysis
+            3. Key Findings and Recommendations
+            4. Compliance Assessment
+            5. Action Items and Next Steps
+            
+            Make the report suitable for legal professionals and decision makers.
+            """
+            
+            return self._make_api_call_with_retry(report_prompt, max_tokens=2000)
+            
+        except Exception as e:
+            return f"Error generating legal report: {str(e)}"
+
+
+class LegalSecurityManager:
+    """Handle security and privacy for legal documents"""
+    
+    def __init__(self):
+        self.access_logs = []
+        self.privilege_markers = [
+            'attorney-client privilege', 'privileged and confidential', 
+            'work product', 'attorney work product', 'confidential',
+            'privileged communication'
+        ]
+    
+    def check_privilege(self, content: str) -> Dict[str, Any]:
+        """Check for attorney-client privilege indicators"""
+        content_lower = content.lower()
+        privilege_found = []
+        
+        for marker in self.privilege_markers:
+            if marker in content_lower:
+                privilege_found.append(marker)
+        
+        return {
+            'is_privileged': len(privilege_found) > 0,
+            'privilege_markers': privilege_found,
+            'warning': 'This document may contain privileged information' if privilege_found else None
+        }
+    
+    def log_access(self, user_id: str, document_name: str, action: str):
+        """Log document access for audit trail"""
+        timestamp = datetime.now().isoformat()
+        log_entry = {
+            'timestamp': timestamp,
+            'user_id': user_id,
+            'document': document_name,
+            'action': action,
+            'hash': hashlib.md5(f"{timestamp}{user_id}{document_name}".encode()).hexdigest()[:8]
+        }
+        self.access_logs.append(log_entry)
+    
+    def encrypt_sensitive_data(self, data: str) -> str:
+        """Basic encryption for sensitive legal data (placeholder)"""
+        # In production, use proper encryption libraries
+        encoded = base64.b64encode(data.encode()).decode()
+        return f"ENCRYPTED:{encoded}"
+    
+    def decrypt_sensitive_data(self, encrypted_data: str) -> str:
+        """Basic decryption for sensitive legal data (placeholder)"""
+        if encrypted_data.startswith("ENCRYPTED:"):
+            encoded = encrypted_data[10:]
+            return base64.b64decode(encoded).decode()
+        return encrypted_data
+    
+    def generate_confidentiality_notice(self) -> str:
+        """Generate a confidentiality notice for legal documents"""
+        return """
+        CONFIDENTIALITY NOTICE:
+        This document may contain attorney-client privileged information and/or 
+        attorney work product. If you are not the intended recipient, please 
+        notify the sender immediately and delete this document. Any unauthorized 
+        review, use, disclosure or distribution is prohibited.
+        """
+
+
+# Legal Document Analysis Classes
+class LegalDocumentType(Enum):
+    CONTRACT = "contract"
+    STATUTE = "statute" 
+    CASE_LAW = "case_law"
+    REGULATION = "regulation"
+    PATENT = "patent"
+    LEGAL_BRIEF = "legal_brief"
+    GENERAL = "general"
+
+@dataclass
+class LegalEntity:
+    name: str
+    entity_type: str  # person, organization, court, jurisdiction
+    role: str  # plaintiff, defendant, party, judge, etc.
+    confidence: float
+
+@dataclass
+class LegalCitation:
+    text: str
+    case_name: str = ""
+    court: str = ""
+    year: str = ""
+    volume: str = ""
+    reporter: str = ""
+    page: str = ""
+    citation_type: str = ""  # case, statute, regulation
+    confidence: float = 0.0
+
+@dataclass
+class LegalClause:
+    text: str
+    clause_type: str  # termination, payment, liability, etc.
+    risk_level: str  # low, medium, high
+    obligations: List[str]
+    section: str = ""
+
+@dataclass
+class LegalDate:
+    date_text: str
+    parsed_date: datetime
+    date_type: str  # deadline, effective_date, expiration, etc.
+    importance: str  # critical, important, informational
+
+class LegalDocumentAnalyzer:
+    """Advanced legal document analysis with specialized features"""
+    
+    def __init__(self, api_key: str):
+        # Initialize OpenRouter client for legal analysis
+        self.client = openai.OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+        )
+        self.model = os.getenv('DEFAULT_MODEL', 'meta-llama/llama-3.1-8b-instruct:free')
+        
+        # Legal patterns and dictionaries
+        self.legal_terms = {
+            'contract_terms': ['whereas', 'party', 'agreement', 'consideration', 'breach', 'termination', 'liability', 'indemnification'],
+            'court_terms': ['plaintiff', 'defendant', 'court', 'judge', 'jury', 'verdict', 'appeal', 'motion'],
+            'regulatory_terms': ['regulation', 'compliance', 'statute', 'code', 'section', 'subsection', 'amendment']
+        }
+        
+        # Citation patterns
+        self.citation_patterns = {
+            'case_citation': r'(\d+)\s+([A-Za-z.]+)\s+(\d+)(?:\s*\(([^)]+)\s+(\d{4})\))?',
+            'statute_citation': r'(\d+)\s+U\.?S\.?C\.?\s+§?\s*(\d+)',
+            'code_citation': r'(\d+)\s+C\.?F\.?R\.?\s+§?\s*(\d+)'
+        }
+        
+        # Risk keywords
+        self.risk_keywords = {
+            'high': ['unlimited liability', 'personal guarantee', 'penalty', 'forfeiture', 'criminal'],
+            'medium': ['liquidated damages', 'indemnification', 'non-compete', 'confidentiality breach'],
+            'low': ['notice required', 'reasonable efforts', 'best practices', 'standard terms']
+        }
+
+    def analyze_legal_document(self, content: str, document_type: str = None) -> Dict[str, Any]:
+        """Comprehensive legal document analysis"""
+        try:
+            # Determine document type if not provided
+            if not document_type:
+                document_type = self.classify_legal_document(content)
+            
+            analysis = {
+                'document_type': document_type,
+                'entities': self.extract_legal_entities(content),
+                'citations': self.extract_legal_citations(content),
+                'clauses': self.extract_legal_clauses(content),
+                'dates': self.extract_legal_dates(content),
+                'risk_assessment': self.assess_legal_risks(content),
+                'plain_english_summary': self.translate_to_plain_english(content),
+                'compliance_check': self.check_compliance(content, document_type),
+                'key_obligations': self.extract_obligations(content)
+            }
+            
+            return analysis
+            
+        except Exception as e:
+            return {'error': f"Legal analysis failed: {str(e)}"}
+
+    def classify_legal_document(self, content: str) -> str:
+        """Classify the type of legal document"""
+        content_lower = content.lower()
+        
+        # Contract indicators
+        if any(term in content_lower for term in ['agreement', 'contract', 'party', 'whereas', 'consideration']):
+            return LegalDocumentType.CONTRACT.value
+        
+        # Case law indicators
+        elif any(term in content_lower for term in ['plaintiff', 'defendant', 'court', 'appeal', 'judgment']):
+            return LegalDocumentType.CASE_LAW.value
+            
+        # Statute indicators
+        elif any(term in content_lower for term in ['statute', 'code', 'section', 'subsection', 'act']):
+            return LegalDocumentType.STATUTE.value
+            
+        # Regulation indicators
+        elif any(term in content_lower for term in ['regulation', 'cfr', 'federal register', 'rule']):
+            return LegalDocumentType.REGULATION.value
+            
+        # Patent indicators
+        elif any(term in content_lower for term in ['patent', 'invention', 'claim', 'prior art', 'embodiment']):
+            return LegalDocumentType.PATENT.value
+            
+        else:
+            return LegalDocumentType.GENERAL.value
+
+    def extract_legal_entities(self, content: str) -> List[LegalEntity]:
+        """Extract legal entities like parties, courts, judges"""
+        entities = []
+        
+        # Simple pattern-based extraction (would be enhanced with NLP)
+        patterns = {
+            'party': r'(?:party|parties)\s+([A-Z][A-Za-z\s]+)(?=\s|,|\.)',
+            'court': r'(?:court|Court)\s+([A-Z][A-Za-z\s]+)(?=\s|,|\.)',
+            'judge': r'(?:judge|Judge|justice|Justice)\s+([A-Z][A-Za-z\s]+)(?=\s|,|\.)'
+        }
+        
+        for entity_type, pattern in patterns.items():
+            matches = re.findall(pattern, content)
+            for match in matches[:5]:  # Limit to avoid noise
+                entities.append(LegalEntity(
+                    name=match.strip(),
+                    entity_type=entity_type,
+                    role=entity_type,
+                    confidence=0.8
+                ))
+        
+        return entities
+
+    def extract_legal_citations(self, content: str) -> List[LegalCitation]:
+        """Extract and parse legal citations"""
+        citations = []
+        
+        for citation_type, pattern in self.citation_patterns.items():
+            matches = re.finditer(pattern, content)
+            for match in matches:
+                citation = LegalCitation(
+                    text=match.group(0),
+                    citation_type=citation_type,
+                    confidence=0.9
+                )
+                
+                if citation_type == 'case_citation':
+                    citation.volume = match.group(1) if match.group(1) else ""
+                    citation.reporter = match.group(2) if match.group(2) else ""
+                    citation.page = match.group(3) if match.group(3) else ""
+                    citation.court = match.group(4) if match.group(4) else ""
+                    citation.year = match.group(5) if match.group(5) else ""
+                
+                citations.append(citation)
+        
+        return citations
+
+    def extract_legal_clauses(self, content: str) -> List[LegalClause]:
+        """Extract and analyze legal clauses"""
+        clauses = []
+        
+        # Split content into potential clauses
+        sections = re.split(r'\n\s*\n|\. [A-Z]', content)
+        
+        clause_types = {
+            'termination': ['termination', 'terminate', 'end', 'expire'],
+            'liability': ['liability', 'liable', 'responsible', 'damages'],
+            'payment': ['payment', 'pay', 'fee', 'cost', 'price'],
+            'confidentiality': ['confidential', 'non-disclosure', 'proprietary', 'trade secret'],
+            'indemnification': ['indemnify', 'indemnification', 'hold harmless', 'defend']
+        }
+        
+        for section in sections:
+            if len(section.strip()) < 50:  # Skip very short sections
+                continue
+                
+            for clause_type, keywords in clause_types.items():
+                if any(keyword in section.lower() for keyword in keywords):
+                    risk_level = self.assess_clause_risk(section)
+                    obligations = self.extract_clause_obligations(section)
+                    
+                    clauses.append(LegalClause(
+                        text=section.strip()[:500],  # Limit length
+                        clause_type=clause_type,
+                        risk_level=risk_level,
+                        obligations=obligations
+                    ))
+                    break
+        
+        return clauses
+
+    def extract_legal_dates(self, content: str) -> List[LegalDate]:
+        """Extract important legal dates and deadlines"""
+        dates = []
+        
+        # Date patterns
+        date_patterns = [
+            r'(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+            r'([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{2,4})',
+            r'(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4})'
+        ]
+        
+        date_types = {
+            'deadline': ['deadline', 'due', 'expire', 'end', 'final'],
+            'effective_date': ['effective', 'commence', 'begin', 'start'],
+            'expiration': ['expiration', 'expire', 'end', 'terminate']
+        }
+        
+        for pattern in date_patterns:
+            matches = re.finditer(pattern, content)
+            for match in matches:
+                date_text = match.group(1)
+                try:
+                    # Simple date parsing (would use more robust parsing in production)
+                    parsed_date = datetime.now()  # Placeholder
+                    
+                    # Determine date type based on context
+                    context = content[max(0, match.start()-50):match.end()+50].lower()
+                    date_type = 'general'
+                    importance = 'informational'
+                    
+                    for dtype, keywords in date_types.items():
+                        if any(keyword in context for keyword in keywords):
+                            date_type = dtype
+                            importance = 'critical' if dtype == 'deadline' else 'important'
+                            break
+                    
+                    dates.append(LegalDate(
+                        date_text=date_text,
+                        parsed_date=parsed_date,
+                        date_type=date_type,
+                        importance=importance
+                    ))
+                except:
+                    continue
+        
+        return dates[:10]  # Limit results
+
+    def assess_legal_risks(self, content: str) -> Dict[str, Any]:
+        """Assess legal risks in the document"""
+        risk_assessment = {
+            'overall_risk': 'low',
+            'risk_factors': [],
+            'recommendations': []
+        }
+        
+        content_lower = content.lower()
+        high_risk_count = 0
+        medium_risk_count = 0
+        
+        # Check for risk keywords
+        for risk_level, keywords in self.risk_keywords.items():
+            for keyword in keywords:
+                if keyword in content_lower:
+                    risk_assessment['risk_factors'].append({
+                        'factor': keyword,
+                        'level': risk_level,
+                        'context': self.extract_context(content, keyword)
+                    })
+                    
+                    if risk_level == 'high':
+                        high_risk_count += 1
+                    elif risk_level == 'medium':
+                        medium_risk_count += 1
+        
+        # Determine overall risk
+        if high_risk_count > 0:
+            risk_assessment['overall_risk'] = 'high'
+        elif medium_risk_count > 1:
+            risk_assessment['overall_risk'] = 'medium'
+        
+        # Generate recommendations
+        if high_risk_count > 0:
+            risk_assessment['recommendations'].append("Consider legal review for high-risk clauses")
+        if medium_risk_count > 0:
+            risk_assessment['recommendations'].append("Review medium-risk terms carefully")
+        
+        return risk_assessment
+
+    def translate_to_plain_english(self, content: str) -> str:
+        """Translate legal jargon to plain English"""
+        try:
+            prompt = f"""
+            Translate the following legal text into plain English that a non-lawyer can understand.
+            Explain legal terms and concepts in simple language while maintaining accuracy.
+            
+            Legal Text:
+            {content[:2000]}
+            
+            Provide a clear, concise explanation in plain English:
+            """
+            
+            return self._make_api_call(prompt, max_tokens=800)
+        except Exception as e:
+            return f"Translation failed: {str(e)}"
+
+    def check_compliance(self, content: str, document_type: str) -> Dict[str, Any]:
+        """Check compliance requirements and gaps"""
+        compliance = {
+            'requirements': [],
+            'gaps': [],
+            'score': 0
+        }
+        
+        # Basic compliance checks based on document type
+        if document_type == LegalDocumentType.CONTRACT.value:
+            required_elements = ['consideration', 'offer', 'acceptance', 'parties']
+            found_elements = []
+            
+            for element in required_elements:
+                if element in content.lower():
+                    found_elements.append(element)
+                else:
+                    compliance['gaps'].append(f"Missing: {element}")
+            
+            compliance['score'] = len(found_elements) / len(required_elements) * 100
+            compliance['requirements'] = required_elements
+        
+        return compliance
+
+    def extract_obligations(self, content: str) -> List[str]:
+        """Extract key obligations from legal text"""
+        obligations = []
+        
+        obligation_patterns = [
+            r'shall\s+([^.]+)',
+            r'must\s+([^.]+)',
+            r'required\s+to\s+([^.]+)',
+            r'agrees\s+to\s+([^.]+)'
+        ]
+        
+        for pattern in obligation_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            for match in matches:
+                obligation = match.strip()
+                if len(obligation) > 10 and len(obligation) < 200:
+                    obligations.append(obligation)
+        
+        return obligations[:10]  # Limit results
+
+    def assess_clause_risk(self, clause: str) -> str:
+        """Assess risk level of a specific clause"""
+        clause_lower = clause.lower()
+        
+        for risk_level, keywords in self.risk_keywords.items():
+            if any(keyword in clause_lower for keyword in keywords):
+                return risk_level
+        
+        return 'low'
+
+    def extract_clause_obligations(self, clause: str) -> List[str]:
+        """Extract obligations from a specific clause"""
+        return self.extract_obligations(clause)
+
+    def extract_context(self, content: str, keyword: str) -> str:
+        """Extract context around a keyword"""
+        index = content.lower().find(keyword.lower())
+        if index != -1:
+            start = max(0, index - 50)
+            end = min(len(content), index + len(keyword) + 50)
+            return content[start:end].strip()
+        return ""
+
+    def compare_legal_documents(self, doc1_content: str, doc2_content: str) -> Dict[str, Any]:
+        """Compare two legal documents (redlining functionality)"""
+        try:
+            # Simple diff comparison
+            diff = list(difflib.unified_diff(
+                doc1_content.splitlines(keepends=True),
+                doc2_content.splitlines(keepends=True),
+                fromfile='Document 1',
+                tofile='Document 2'
+            ))
+            
+            added_lines = []
+            removed_lines = []
+            
+            for line in diff:
+                if line.startswith('+') and not line.startswith('+++'):
+                    added_lines.append(line[1:])
+                elif line.startswith('-') and not line.startswith('---'):
+                    removed_lines.append(line[1:])
+            
+            return {
+                'differences_found': len(added_lines) + len(removed_lines) > 0,
+                'added_content': added_lines[:20],  # Limit results
+                'removed_content': removed_lines[:20],
+                'similarity_score': self.calculate_similarity(doc1_content, doc2_content)
+            }
+        except Exception as e:
+            return {'error': f"Document comparison failed: {str(e)}"}
+
+    def calculate_similarity(self, text1: str, text2: str) -> float:
+        """Calculate similarity score between two texts"""
+        # Simple character-based similarity
+        matcher = difflib.SequenceMatcher(None, text1, text2)
+        return round(matcher.ratio() * 100, 2)
+
+    def _make_api_call(self, prompt: str, max_tokens: int = 500) -> str:
+        """Make API call for legal analysis"""
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_tokens,
+                temperature=0.3,
+                stream=False
+            )
+            
+            if hasattr(response, 'choices') and response.choices:
+                choice = response.choices[0]
+                if hasattr(choice, 'message') and hasattr(choice.message, 'content'):
+                    return str(choice.message.content)
+            
+            return "Analysis completed but response format unclear"
+        except Exception as e:
+            return f"API call failed: {str(e)}"
+
 
 def create_streamlit_ui():
     """Create the Streamlit user interface"""
@@ -545,9 +1344,9 @@ def create_streamlit_ui():
         layout="wide",
         initial_sidebar_state="expanded",
         menu_items={
-            'Get Help': 'https://github.com/DevanshSrajput/Dataa_Analyst_Agent',
-            'Report a bug': "mailto:dksdevansh@gmail.com",
-            'About': "AI-powered document analysis tool by Devansh Singh"
+            'Get Help': 'https://github.com/ARCH_USERS/Dataa_Analyst_Agent',
+            'Report a bug': "mailto:support@archusers.com",
+            'About': "AI-powered document analysis tool by ARCH_USERS"
         }
     )
     
@@ -914,6 +1713,70 @@ def create_streamlit_ui():
             background-color: var(--accent-color) !important;
             color: white !important;
         }
+        
+        /* Light mode buttons */
+        .stButton > button {
+            background-color: var(--bg-tertiary) !important;
+            color: var(--text-primary) !important;
+            border: 1px solid var(--border-color) !important;
+        }
+        
+        .stButton > button:hover {
+            background-color: var(--accent-color) !important;
+            color: white !important;
+        }
+        
+        /* Light mode metrics */
+        .css-1d391kg .stMetric,
+        .css-1d391kg .stMetric *,
+        .css-1d391kg [data-testid="metric-container"],
+        .css-1d391kg [data-testid="metric-container"] * {
+            background-color: var(--bg-tertiary) !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* Light mode file uploader */
+        .stFileUploader > div {
+            background-color: var(--upload-bg) !important;
+            border: 2px dashed var(--border-color) !important;
+            border-radius: 10px !important;
+        }
+        
+        /* Light mode text inputs */
+        .stTextInput > div > div > input,
+        .stTextArea > div > div > textarea {
+            background-color: white !important;
+            color: var(--text-primary) !important;
+            border: 1px solid var(--border-color) !important;
+        }
+        
+        /* Light mode tabs */
+        .stTabs [data-baseweb="tab-list"] {
+            background-color: var(--tab-bg) !important;
+        }
+        
+        .stTabs [data-baseweb="tab"] {
+            background-color: transparent !important;
+            color: var(--text-primary) !important;
+        }
+        
+        .stTabs [aria-selected="true"] {
+            background-color: var(--tab-selected) !important;
+            color: white !important;
+        }
+        
+        /* Light mode dataframe */
+        .stDataFrame {
+            background-color: white !important;
+            color: var(--text-primary) !important;
+        }
+        
+        /* Light mode expander */
+        .streamlit-expanderHeader,
+        .streamlit-expanderContent {
+            background-color: var(--bg-tertiary) !important;
+            color: var(--text-primary) !important;
+        }
         """
     
     st.markdown(f"""
@@ -1275,20 +2138,20 @@ def create_streamlit_ui():
     <div class="main-header">
         <h1>🤖 AI Document Analyst {theme_indicator}</h1>
         <p style="font-size: 1.2em; margin: 0;">Transform your documents into actionable insights with AI</p>
-        <p style="opacity: 0.9; margin: 0.5rem 0 0 0;">Built by Devansh Singh | Powered by Meta Llama & Together AI | {st.session_state.theme_mode.title()} Mode</p>
+        <p style="opacity: 0.9; margin: 0.5rem 0 0 0;">Built by ARCH_USERS | Powered by OpenRouter AI | {st.session_state.theme_mode.title()} Mode</p>
     </div>
     """, unsafe_allow_html=True)
     
     # Initialize agent with enhanced error handling
-    api_key = os.getenv('TOGETHER_API_KEY')
+    api_key = os.getenv('OPENROUTER_API_KEY')
     
     if not api_key:
-        st.error("🔐 **API Key Required!** Please set your TOGETHER_API_KEY in the .env file")
+        st.error("🔐 **API Key Required!** Please set your OPENROUTER_API_KEY in the .env file")
         with st.expander("🔧 How to set up API Key"):
             st.markdown("""
-            1. Get your API key from [Together AI](https://api.together.xyz/)
+            1. Get your API key from [OpenRouter](https://openrouter.ai/)
             2. Create a `.env` file in your project directory
-            3. Add: `TOGETHER_API_KEY=your_api_key_here`
+            3. Add: `OPENROUTER_API_KEY=your_api_key_here`
             4. Restart the application
             """)
         return
@@ -1341,7 +2204,7 @@ def create_streamlit_ui():
         
         # API Key Management
         with st.expander("🔑 API Configuration"):
-            current_key = os.getenv('TOGETHER_API_KEY')
+            current_key = os.getenv('OPENROUTER_API_KEY')
             if current_key:
                 st.success("✅ API key loaded")
                 st.text(f"Key: {current_key[:8]}...")
@@ -1375,7 +2238,7 @@ def create_streamlit_ui():
             3. Wait for AI processing
             4. Chat with your documents!
             
-            **📧 Support:** dksdevansh@gmail.com
+            **📧 Support:** support@archusers.com
             """)
         
         # Clear button
@@ -1391,11 +2254,14 @@ def create_streamlit_ui():
         # App info
         st.markdown("---")
         st.markdown("**🤖 AI Document Analyst v2.0**")
-        st.markdown("Built by Devansh Singh")
+        st.markdown("Built by ARCH_USERS")
         st.markdown("Powered by Together AI")
     
     # Main content area with tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏠 Home", "📤 Upload & Process", "💬 AI Chat", "📊 Analytics", "⚙️ Settings"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "🏠 Home", "📤 Upload & Process", "💬 AI Chat", "📊 Analytics", 
+        "⚙️ Settings", "⚖️ Legal Analysis", "🔒 Legal Security"
+    ])
     
     with tab1:
         # Welcome and features section
@@ -1779,14 +2645,14 @@ def create_streamlit_ui():
         
         with col1:
             # Current API Key Status
-            current_key = os.getenv('TOGETHER_API_KEY')
+            current_key = os.getenv('OPENROUTER_API_KEY')
             if current_key:
                 st.success(f"✅ **Current API Key Status:** Active")
                 st.text(f"🔐 Key Preview: {current_key[:12]}...{current_key[-8:]}")
                 st.text(f"📅 Loaded from: Environment (.env file)")
             else:
                 st.error("❌ **No API Key Found**")
-                st.warning("Please set your TOGETHER_API_KEY in the .env file or use temporary override below.")
+                st.warning("Please set your OPENROUTER_API_KEY in the .env file or use temporary override below.")
             
             # Temporary API Key Override
             st.markdown("#### 🔄 Temporary API Key Override")
@@ -1795,7 +2661,7 @@ def create_streamlit_ui():
             temp_api_key = st.text_input(
                 "Enter Temporary API Key:",
                 type="password",
-                placeholder="Enter your Together AI API key here...",
+                placeholder="Enter your OpenRouter API key here...",
                 help="This will be used instead of the .env file key until you refresh the page"
             )
             
@@ -1844,15 +2710,15 @@ def create_streamlit_ui():
         with col2:
             st.markdown("#### 📖 How to get API Key")
             st.markdown("""
-            1. Visit [Together AI](https://api.together.xyz/)
+            1. Visit [OpenRouter](https://openrouter.ai/)
             2. Sign up or log in to your account
             3. Navigate to API Keys section
             4. Create a new API key
             5. Copy and paste it here or in your .env file
             """)
             
-            if st.button("🌐 Open Together AI", use_container_width=True):
-                st.markdown("[🔗 Click here to visit Together AI](https://api.together.xyz/)")
+            if st.button("🌐 Open OpenRouter", use_container_width=True):
+                st.markdown("[🔗 Click here to visit OpenRouter](https://openrouter.ai/)")
         
         st.markdown("---")
         
@@ -2132,10 +2998,10 @@ def create_streamlit_ui():
         st.markdown("### ℹ️ About")
         st.markdown("""
         **📊 AI Document Analyst v2.0**
-        - Built by Devansh Singh
+        - Built by ARCH_USERS
         - Powered by Together AI & Meta Llama
-        - GitHub: [Dataa_Analyst_Agent](https://github.com/DevanshSrajput/Dataa_Analyst_Agent)
-        - Email: dksdevansh@gmail.com
+        - GitHub: [Dataa_Analyst_Agent](https://github.com/ARCH_USERS/Dataa_Analyst_Agent)
+        - Email: support@archusers.com
         
         **🚀 Features:**
         - Multi-format document processing
@@ -2143,7 +3009,371 @@ def create_streamlit_ui():
         - Interactive chat interface
         - Automatic data visualization
         - Comprehensive analytics dashboard
+        - Legal document analysis and insights
+        - Risk assessment and compliance checking
+        - Legal security and privacy protection
         """)
+
+    with tab6:
+        # Legal Analysis Tab
+        st.markdown("## ⚖️ Legal Document Analysis")
+        
+        if not agent.document_content:
+            st.info("📄 Upload legal documents first to perform legal analysis!")
+            st.markdown("""
+            ### 🎯 Legal Analysis Features:
+            - **Document Classification**: Automatically identify contract types, statutes, regulations
+            - **Risk Assessment**: Detect and evaluate legal risks and liabilities
+            - **Plain English Translation**: Convert legal jargon to understandable language
+            - **Citation Analysis**: Extract and validate legal citations
+            - **Compliance Checking**: Verify document completeness and compliance
+            - **Entity Recognition**: Identify parties, courts, jurisdictions
+            - **Date Extraction**: Find critical deadlines and dates
+            - **Document Comparison**: Compare contract versions (redlining)
+            """)
+        else:
+            # Legal document selection
+            legal_docs = [name for name, doc in agent.document_content.items() 
+                         if agent.is_legal_document(doc['content'])]
+            
+            if not legal_docs:
+                st.warning("⚠️ No legal documents detected in uploaded files")
+                st.markdown("""
+                **Legal Document Indicators:**
+                - Contracts and agreements
+                - Legal briefs and motions
+                - Statutes and regulations
+                - Court decisions
+                - Patents and IP documents
+                """)
+            else:
+                st.success(f"✅ {len(legal_docs)} legal document(s) detected")
+                
+                selected_doc = st.selectbox(
+                    "Select Document for Legal Analysis:",
+                    legal_docs,
+                    help="Choose a legal document to analyze"
+                )
+                
+                if selected_doc:
+                    # Display basic legal analysis
+                    if selected_doc in agent.legal_analysis_results:
+                        analysis = agent.legal_analysis_results[selected_doc]
+                        
+                        # Legal Analysis Overview
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            doc_type = analysis.get('document_type', 'Unknown')
+                            st.metric("📋 Document Type", doc_type.replace('_', ' ').title())
+                        
+                        with col2:
+                            risk_level = analysis.get('risk_assessment', {}).get('overall_risk', 'Unknown')
+                            risk_color = {'high': '🔴', 'medium': '🟡', 'low': '🟢'}.get(risk_level, '⚪')
+                            st.metric("⚠️ Risk Level", f"{risk_color} {risk_level.title()}")
+                        
+                        with col3:
+                            compliance_score = analysis.get('compliance_check', {}).get('score', 0)
+                            st.metric("✅ Compliance Score", f"{compliance_score}%")
+                        
+                        # Detailed Analysis Sections
+                        st.markdown("### 📊 Detailed Legal Analysis")
+                        
+                        # Risk Assessment
+                        with st.expander("⚠️ Risk Assessment", expanded=True):
+                            risk_assessment = analysis.get('risk_assessment', {})
+                            
+                            if risk_assessment.get('risk_factors'):
+                                st.markdown("**Identified Risk Factors:**")
+                                for risk in risk_assessment['risk_factors']:
+                                    level_icon = {'high': '🔴', 'medium': '🟡', 'low': '🟢'}.get(risk['level'], '⚪')
+                                    st.markdown(f"- {level_icon} **{risk['factor'].title()}** ({risk['level']} risk)")
+                                    if risk.get('context'):
+                                        st.text(f"   Context: {risk['context'][:100]}...")
+                            
+                            if risk_assessment.get('recommendations'):
+                                st.markdown("**Recommendations:**")
+                                for rec in risk_assessment['recommendations']:
+                                    st.markdown(f"- 💡 {rec}")
+                        
+                        # Plain English Summary
+                        with st.expander("📝 Plain English Summary", expanded=True):
+                            plain_summary = analysis.get('plain_english_summary', '')
+                            if plain_summary:
+                                st.write(plain_summary)
+                            else:
+                                if st.button("🔄 Generate Plain English Summary"):
+                                    with st.spinner("Translating legal text..."):
+                                        summary = agent.legal_analyzer.translate_to_plain_english(
+                                            agent.document_content[selected_doc]['content']
+                                        )
+                                        st.write(summary)
+                        
+                        # Legal Entities
+                        with st.expander("👥 Legal Entities"):
+                            entities = analysis.get('entities', [])
+                            if entities:
+                                for entity in entities[:10]:
+                                    st.markdown(f"- **{entity.name}** ({entity.entity_type}) - Role: {entity.role}")
+                            else:
+                                st.info("No legal entities extracted")
+                        
+                        # Legal Citations
+                        with st.expander("📚 Legal Citations"):
+                            citations = analysis.get('citations', [])
+                            if citations:
+                                for citation in citations[:10]:
+                                    st.markdown(f"- **{citation.text}** ({citation.citation_type})")
+                                    if citation.case_name:
+                                        st.text(f"  Case: {citation.case_name}")
+                                    if citation.court:
+                                        st.text(f"  Court: {citation.court}")
+                            else:
+                                st.info("No legal citations found")
+                        
+                        # Key Obligations
+                        with st.expander("📋 Key Obligations"):
+                            obligations = analysis.get('key_obligations', [])
+                            if obligations:
+                                for i, obligation in enumerate(obligations[:10], 1):
+                                    st.markdown(f"{i}. {obligation}")
+                            else:
+                                st.info("No specific obligations identified")
+                        
+                        # Legal Dates and Deadlines
+                        with st.expander("📅 Important Dates"):
+                            dates = analysis.get('dates', [])
+                            if dates:
+                                for date in dates[:10]:
+                                    importance_icon = {'critical': '🔴', 'important': '🟡', 'informational': '🔵'}.get(date.importance, '⚪')
+                                    st.markdown(f"- {importance_icon} **{date.date_text}** ({date.date_type})")
+                            else:
+                                st.info("No specific dates extracted")
+                        
+                        # Actions
+                        st.markdown("### 🎯 Actions")
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            if st.button("📊 Generate Legal Visualizations", use_container_width=True):
+                                with st.spinner("Creating legal visualizations..."):
+                                    viz_paths = agent.create_legal_visualizations(selected_doc)
+                                    if viz_paths:
+                                        st.success(f"✅ Generated {len(viz_paths)} visualizations")
+                                        for viz_path in viz_paths:
+                                            st.image(viz_path, use_container_width=True)
+                                    else:
+                                        st.warning("No visualizations could be generated")
+                        
+                        with col2:
+                            if st.button("📄 Generate Legal Report", use_container_width=True):
+                                with st.spinner("Generating comprehensive legal report..."):
+                                    report = agent.generate_legal_report(selected_doc)
+                                    st.markdown("### 📋 Legal Analysis Report")
+                                    st.write(report)
+                        
+                        with col3:
+                            if st.button("🔄 Refresh Analysis", use_container_width=True):
+                                with st.spinner("Re-analyzing document..."):
+                                    content = agent.document_content[selected_doc]['content']
+                                    new_analysis = agent.legal_analyzer.analyze_legal_document(content)
+                                    agent.legal_analysis_results[selected_doc] = new_analysis
+                                    st.success("✅ Analysis refreshed")
+                                    st.rerun()
+                    
+                    else:
+                        st.warning("⚠️ Legal analysis not available. Processing document...")
+                        with st.spinner("Performing legal analysis..."):
+                            analysis = agent.perform_legal_analysis(selected_doc)
+                            if 'error' not in analysis:
+                                agent.legal_analysis_results[selected_doc] = analysis
+                                st.success("✅ Legal analysis completed")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Analysis failed: {analysis['error']}")
+        
+        # Document Comparison Section
+        st.markdown("---")
+        st.markdown("### 📊 Legal Document Comparison")
+        
+        legal_docs = [name for name, doc in agent.document_content.items() 
+                     if agent.is_legal_document(doc['content'])]
+        
+        if len(legal_docs) >= 2:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                doc1 = st.selectbox("First Document:", legal_docs, key="legal_comp_doc1")
+            
+            with col2:
+                doc2 = st.selectbox("Second Document:", legal_docs, key="legal_comp_doc2")
+            
+            if doc1 and doc2 and doc1 != doc2:
+                if st.button("🔍 Compare Documents", use_container_width=True):
+                    with st.spinner("Comparing legal documents..."):
+                        comparison = agent.compare_legal_documents(doc1, doc2)
+                        
+                        if 'error' not in comparison:
+                            st.markdown("#### 📋 Comparison Results")
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("📊 Similarity Score", f"{comparison['similarity_score']}%")
+                            with col2:
+                                status = "✅ Identical" if comparison['similarity_score'] > 95 else "📊 Different"
+                                st.metric("📄 Status", status)
+                            
+                            if comparison.get('added_content'):
+                                with st.expander("➕ Added Content"):
+                                    for line in comparison['added_content'][:10]:
+                                        st.text(f"+ {line.strip()}")
+                            
+                            if comparison.get('removed_content'):
+                                with st.expander("➖ Removed Content"):
+                                    for line in comparison['removed_content'][:10]:
+                                        st.text(f"- {line.strip()}")
+                        else:
+                            st.error(f"❌ Comparison failed: {comparison['error']}")
+        else:
+            st.info("📄 Upload at least 2 legal documents to enable comparison")
+
+    with tab7:
+        # Legal Security Tab
+        st.markdown("## 🔒 Legal Security & Privacy")
+        
+        if not agent.document_content:
+            st.info("📄 Upload documents first to perform security analysis!")
+            st.markdown("""
+            ### 🛡️ Legal Security Features:
+            - **Privilege Detection**: Identify attorney-client privileged content
+            - **Confidentiality Checking**: Detect confidential information markers
+            - **Access Logging**: Track document access and usage
+            - **Data Encryption**: Secure sensitive legal information
+            - **Audit Trail**: Maintain comprehensive access logs
+            - **Compliance Notices**: Generate confidentiality warnings
+            """)
+        else:
+            # Privilege and Confidentiality Check
+            st.markdown("### 🛡️ Privilege & Confidentiality Analysis")
+            
+            privileged_docs = []
+            
+            for doc_name, doc_info in agent.document_content.items():
+                privilege_check = agent.security_manager.check_privilege(doc_info['content'])
+                if privilege_check['is_privileged']:
+                    privileged_docs.append((doc_name, privilege_check))
+            
+            if privileged_docs:
+                st.warning(f"⚠️ {len(privileged_docs)} document(s) contain privileged content")
+                
+                for doc_name, privilege_info in privileged_docs:
+                    with st.expander(f"🔒 {doc_name} - Privileged Content Detected"):
+                        st.error(privilege_info['warning'])
+                        st.markdown("**Privilege Markers Found:**")
+                        for marker in privilege_info['privilege_markers']:
+                            st.markdown(f"- 🔸 {marker}")
+                        
+                        # Show confidentiality notice
+                        st.markdown("**Confidentiality Notice:**")
+                        st.text(agent.security_manager.generate_confidentiality_notice())
+            else:
+                st.success("✅ No privileged content detected in uploaded documents")
+            
+            # Access Logging
+            st.markdown("### 📋 Access Audit Trail")
+            
+            if agent.security_manager.access_logs:
+                st.success(f"📊 {len(agent.security_manager.access_logs)} access log entries")
+                
+                # Display recent access logs
+                with st.expander("📜 Recent Access Logs"):
+                    for log in agent.security_manager.access_logs[-10:]:
+                        st.markdown(f"**{log['timestamp']}** - User: {log['user_id']} - Action: {log['action']} - Document: {log['document']}")
+            else:
+                st.info("📝 No access logs recorded yet")
+            
+            # Document Security Actions
+            st.markdown("### 🎯 Security Actions")
+            
+            selected_doc = st.selectbox(
+                "Select Document for Security Analysis:",
+                list(agent.document_content.keys()),
+                help="Choose a document to analyze for security issues"
+            )
+            
+            if selected_doc:
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    if st.button("🔍 Check Privilege", use_container_width=True):
+                        content = agent.document_content[selected_doc]['content']
+                        privilege_check = agent.security_manager.check_privilege(content)
+                        
+                        if privilege_check['is_privileged']:
+                            st.error("🔒 PRIVILEGED CONTENT DETECTED")
+                            st.warning(privilege_check['warning'])
+                            for marker in privilege_check['privilege_markers']:
+                                st.text(f"• {marker}")
+                        else:
+                            st.success("✅ No privileged content markers found")
+                
+                with col2:
+                    if st.button("📝 Log Access", use_container_width=True):
+                        agent.security_manager.log_access(
+                            user_id="current_user",
+                            document_name=selected_doc,
+                            action="security_review"
+                        )
+                        st.success(f"✅ Access logged for {selected_doc}")
+                
+                with col3:
+                    if st.button("🔐 Generate Notice", use_container_width=True):
+                        notice = agent.security_manager.generate_confidentiality_notice()
+                        st.markdown("### 📋 Confidentiality Notice")
+                        st.text(notice)
+            
+            # Security Settings
+            st.markdown("---")
+            st.markdown("### ⚙️ Security Settings")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### 🔐 Encryption Settings")
+                
+                enable_encryption = st.checkbox(
+                    "Enable Document Encryption",
+                    help="Encrypt sensitive document content"
+                )
+                
+                auto_privilege_check = st.checkbox(
+                    "Automatic Privilege Detection",
+                    value=True,
+                    help="Automatically check for privileged content on upload"
+                )
+                
+                log_all_access = st.checkbox(
+                    "Log All Document Access",
+                    value=True,
+                    help="Maintain audit trail of all document interactions"
+                )
+            
+            with col2:
+                st.markdown("#### 📊 Security Statistics")
+                
+                total_docs = len(agent.document_content)
+                privileged_count = len(privileged_docs)
+                access_logs_count = len(agent.security_manager.access_logs)
+                
+                st.metric("📄 Total Documents", total_docs)
+                st.metric("🔒 Privileged Documents", privileged_count)
+                st.metric("📝 Access Log Entries", access_logs_count)
+                
+                # Security score
+                if total_docs > 0:
+                    security_score = max(0, 100 - (privileged_count / total_docs * 50))
+                    st.metric("🛡️ Security Score", f"{security_score:.0f}%")
+
 
 def smart_streamlit_launch():
     """Smart Streamlit launcher"""
