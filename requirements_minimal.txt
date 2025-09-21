@@ -1,0 +1,24 @@
+# Minimal requirements for Streamlit Cloud deployment testing
+# Core essentials only
+
+# Web framework
+streamlit
+
+# Data processing
+pandas
+numpy
+matplotlib
+seaborn
+
+# Document processing
+pypdf2==3.0.1
+python-docx
+Pillow
+
+# API and web
+requests
+openai
+python-dotenv
+
+# Visualization
+plotly

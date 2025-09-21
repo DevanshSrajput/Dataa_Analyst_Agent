@@ -62,3 +62,4 @@ visualizations_*/
 # *.xls
 # *.pdf
 # *.docx
+/.env
