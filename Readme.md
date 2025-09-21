@@ -60,6 +60,19 @@
 
 ---
 
+## Screenshots
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/a07f6ebf-bb97-4a1d-b6c0-5b245cf6b02c" />
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/9f1e903a-f200-4aa3-a880-7c04c728079f" />
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/7332c471-e654-4eb3-9339-79af387cbdb5" />
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/0226a1ad-8b63-43f5-8c1c-4af602a2246c" />
+
+![Uploading image.png…]()
+
+
 ## 🎯 Target Users
 
 ### 👨‍💼 **Small Business Owners**
