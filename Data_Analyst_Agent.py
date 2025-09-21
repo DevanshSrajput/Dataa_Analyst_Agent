@@ -41,8 +41,6 @@ except ImportError as e:
     input("Press Enter to exit...")
     sys.exit(1)
 
-from typing import Dict, List, Any, Optional, Union
-
 # File processing imports
 try:
     import PyPDF2
@@ -52,7 +50,6 @@ try:
     import requests
     import openai
     import re
-    import spacy
     from datetime import datetime, timedelta
     import hashlib
     from dataclasses import dataclass
@@ -61,8 +58,56 @@ try:
 except ImportError as e:
     print(f"Error importing file processing libraries: {e}")
     print("Please run: pip install PyPDF2 python-docx Pillow pytesseract requests openai")
-    print("Also run: python -m spacy download en_core_web_sm")
     sys.exit(1)
+
+# NLP imports with graceful fallback
+try:
+    import spacy
+    SPACY_AVAILABLE = True
+    try:
+        # Try to load the English model
+        nlp = spacy.load("en_core_web_sm")
+    except OSError:
+        # Model not installed, try to install it at runtime
+        print("🔧 Attempting to download spaCy English model...")
+        try:
+            import subprocess
+            subprocess.run([sys.executable, "-m", "spacy", "download", "en_core_web_sm"], 
+                          check=True, capture_output=True)
+            nlp = spacy.load("en_core_web_sm")
+            print("✅ spaCy English model downloaded successfully")
+        except Exception as install_error:
+            nlp = None
+            print(f"⚠️  Could not install spaCy model: {install_error}")
+            print("Some NLP features will be limited.")
+except ImportError:
+    SPACY_AVAILABLE = False
+    nlp = None
+    print("⚠️  spaCy not available. NLP features will be limited.")
+
+def ensure_spacy_model():
+    """Ensure spaCy model is available, with runtime installation fallback"""
+    global nlp, SPACY_AVAILABLE, spacy
+    
+    if not SPACY_AVAILABLE:
+        return False
+        
+    if nlp is None:
+        try:
+            import spacy
+            nlp = spacy.load("en_core_web_sm")
+            return True
+        except OSError:
+            # Try installing at runtime (for Streamlit Cloud)
+            try:
+                import subprocess
+                subprocess.run([sys.executable, "-m", "spacy", "download", "en_core_web_sm"], 
+                              check=True, capture_output=True)
+                nlp = spacy.load("en_core_web_sm")
+                return True
+            except:
+                return False
+    return True
 
 # UI imports
 try:
@@ -72,6 +117,33 @@ except ImportError as e:
     print(f"Error importing UI libraries: {e}")
     print("Please run: pip install streamlit")
     sys.exit(1)
+
+def test_api_key(api_key: str) -> tuple[bool, str]:
+    """Test an API key without full agent initialization"""
+    try:
+        client = openai.OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+            default_headers={
+                "HTTP-Referer": os.getenv('OPENROUTER_APP_URL', 'https://github.com/DevanshSrajput/Dataa_Analyst_Agent'),
+                "X-Title": os.getenv('OPENROUTER_APP_NAME', 'AI Document Analyst v2.0')
+            }
+        )
+        
+        response = client.chat.completions.create(
+            model='meta-llama/llama-3.1-8b-instruct:free',
+            messages=[{"role": "user", "content": "Test"}],
+            max_tokens=5,
+            temperature=0.1
+        )
+        return True, "✅ API key is valid!"
+    except Exception as e:
+        if "401" in str(e):
+            return False, "❌ Invalid or expired API key"
+        elif "429" in str(e):
+            return False, "⏰ Rate limit reached, but key appears valid"
+        else:
+            return False, f"❌ Connection error: {str(e)}"
 
 class DocumentAnalystAgent:
     """
@@ -88,6 +160,10 @@ class DocumentAnalystAgent:
             self.client = openai.OpenAI(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=api_key,
+                default_headers={
+                    "HTTP-Referer": os.getenv('OPENROUTER_APP_URL', 'https://github.com/DevanshSrajput/Dataa_Analyst_Agent'),
+                    "X-Title": os.getenv('OPENROUTER_APP_NAME', 'AI Document Analyst v2.0')
+                }
             )
             
             # Set default model - using a reliable free model
@@ -701,7 +777,7 @@ class DocumentAnalystAgent:
                     
                     plt.figure(figsize=(10, 6))
                     colors = ['red', 'orange', 'green']
-                    plt.bar(risk_counts.keys(), risk_counts.values(), color=colors)
+                    plt.bar(list(risk_counts.keys()), list(risk_counts.values()), color=colors)
                     plt.title('Legal Risk Assessment')
                     plt.xlabel('Risk Level')
                     plt.ylabel('Number of Risk Factors')
@@ -725,7 +801,7 @@ class DocumentAnalystAgent:
                 
                 if entity_types:
                     plt.figure(figsize=(8, 8))
-                    plt.pie(entity_types.values(), labels=entity_types.keys(), autopct='%1.1f%%')
+                    plt.pie(list(entity_types.values()), labels=list(entity_types.keys()), autopct='%1.1f%%')
                     plt.title('Legal Entities Distribution')
                     
                     entities_path = os.path.join(output_dir, 'entities_distribution.png')
@@ -760,8 +836,8 @@ class DocumentAnalystAgent:
                 
                 ax.set_ylim(0, 1.2)
                 ax.set_title(f'Compliance Score: {score}%', pad=20)
-                ax.set_rticks([])
-                ax.set_thetagrids([0, 45, 90, 135, 180], ['0%', '25%', '50%', '75%', '100%'])
+                ax.set_ylim(0, 1.2)
+                ax.grid(True)
                 
                 compliance_path = os.path.join(output_dir, 'compliance_score.png')
                 plt.savefig(compliance_path, dpi=300, bbox_inches='tight')
@@ -951,6 +1027,10 @@ class LegalDocumentAnalyzer:
         self.client = openai.OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=api_key,
+            default_headers={
+                "HTTP-Referer": os.getenv('OPENROUTER_APP_URL', 'https://github.com/DevanshSrajput/Dataa_Analyst_Agent'),
+                "X-Title": os.getenv('OPENROUTER_APP_NAME', 'AI Document Analyst v2.0')
+            }
         )
         self.model = os.getenv('DEFAULT_MODEL', 'meta-llama/llama-3.1-8b-instruct:free')
         
@@ -975,7 +1055,7 @@ class LegalDocumentAnalyzer:
             'low': ['notice required', 'reasonable efforts', 'best practices', 'standard terms']
         }
 
-    def analyze_legal_document(self, content: str, document_type: str = None) -> Dict[str, Any]:
+    def analyze_legal_document(self, content: str, document_type: Optional[str] = None) -> Dict[str, Any]:
         """Comprehensive legal document analysis"""
         try:
             # Determine document type if not provided
@@ -2145,24 +2225,97 @@ def create_streamlit_ui():
     # Initialize agent with enhanced error handling
     api_key = os.getenv('OPENROUTER_API_KEY')
     
+    # Check for temporary API key override
+    if 'temp_api_key' in st.session_state and st.session_state.temp_api_key:
+        api_key = st.session_state.temp_api_key
+    
     if not api_key:
-        st.error("🔐 **API Key Required!** Please set your OPENROUTER_API_KEY in the .env file")
-        with st.expander("🔧 How to set up API Key"):
+        st.error("🔐 **API Key Required!** Please set your OPENROUTER_API_KEY or enter it below")
+        
+        # Provide temporary API key input
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            temp_key = st.text_input(
+                "Enter your OpenRouter API Key:",
+                type="password",
+                placeholder="sk-or-v1-...",
+                help="Get your API key from https://openrouter.ai/"
+            )
+        with col2:
+            st.markdown("<br>", unsafe_allow_html=True)  # Add spacing
+            if st.button("🔑 Use Key"):
+                if temp_key:
+                    # Test the key first
+                    with st.spinner("Testing API key..."):
+                        is_valid, message = test_api_key(temp_key)
+                        if is_valid:
+                            st.session_state.temp_api_key = temp_key
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
+        
+        with st.expander("🔧 How to get an API Key"):
             st.markdown("""
-            1. Get your API key from [OpenRouter](https://openrouter.ai/)
-            2. Create a `.env` file in your project directory
-            3. Add: `OPENROUTER_API_KEY=your_api_key_here`
-            4. Restart the application
+            1. **Visit [OpenRouter](https://openrouter.ai/)**
+            2. **Sign up or log in** to your account
+            3. **Go to API Keys** section in your dashboard
+            4. **Create a new API key**
+            5. **Copy and paste it above** or add to your `.env` file
             """)
+        
+        if temp_key:
+            st.info("💡 Click 'Use Key' button to test your API key")
         return
     
-    if 'agent' not in st.session_state:
+    if 'agent' not in st.session_state or 'agent_error' in st.session_state:
         with st.spinner("🚀 Initializing AI Agent..."):
             try:
                 st.session_state.agent = DocumentAnalystAgent(api_key)
                 st.success("✅ AI Agent ready for action!")
+                # Clear any previous errors
+                if 'agent_error' in st.session_state:
+                    del st.session_state.agent_error
             except Exception as e:
                 st.error(f"❌ Failed to initialize agent: {str(e)}")
+                
+                # Check if it's an API key error
+                if "401" in str(e) or "User not found" in str(e) or "No auth credentials" in str(e):
+                    st.session_state.agent_error = True
+                    st.warning("🔑 **API Key Issue Detected!** Your current API key appears to be invalid or expired.")
+                    
+                    # Provide option to enter new key
+                    st.markdown("### 🔄 **Try a New API Key:**")
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        new_api_key = st.text_input(
+                            "Enter a new OpenRouter API Key:",
+                            type="password",
+                            placeholder="sk-or-v1-...",
+                            key="new_api_key_input"
+                        )
+                    with col2:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        if st.button("🔄 Try New Key"):
+                            if new_api_key:
+                                # Test the new key first
+                                with st.spinner("Testing new API key..."):
+                                    is_valid, message = test_api_key(new_api_key)
+                                    if is_valid:
+                                        st.session_state.temp_api_key = new_api_key
+                                        if 'agent' in st.session_state:
+                                            del st.session_state.agent
+                                        st.success(message)
+                                        st.rerun()
+                                    else:
+                                        st.error(message)
+                    
+                    st.markdown("""
+                    **Common solutions:**
+                    - Get a fresh API key from [OpenRouter.ai](https://openrouter.ai/)
+                    - Check that your account is in good standing
+                    - Verify you have credits/usage remaining
+                    """)
                 return
     
     agent = st.session_state.agent
