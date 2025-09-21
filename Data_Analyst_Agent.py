@@ -41,12 +41,11 @@ except ImportError as e:
     input("Press Enter to exit...")
     sys.exit(1)
 
-# File processing imports
+# File processing imports with graceful fallback for problematic packages
 try:
     import PyPDF2
     import docx
     from PIL import Image
-    import pytesseract
     import requests
     import openai
     import re
@@ -56,9 +55,17 @@ try:
     from enum import Enum
     import difflib
 except ImportError as e:
-    print(f"Error importing file processing libraries: {e}")
-    print("Please run: pip install PyPDF2 python-docx Pillow pytesseract requests openai")
+    print(f"Error importing core libraries: {e}")
+    print("Please run: pip install PyPDF2 python-docx Pillow requests openai")
     sys.exit(1)
+
+# Optional OCR import (may not work on all deployments)
+try:
+    import pytesseract
+    PYTESSERACT_AVAILABLE = True
+except ImportError:
+    PYTESSERACT_AVAILABLE = False
+    print("⚠️  pytesseract not available. OCR features will be disabled.")
 
 # NLP imports with graceful fallback
 try:
@@ -241,7 +248,11 @@ class DocumentAnalystAgent:
     def extract_text_from_image(self, file_path: str) -> str:
         """Extract text from image using OCR"""
         try:
+            if not PYTESSERACT_AVAILABLE:
+                return "OCR functionality not available. Please install pytesseract and tesseract-ocr system package."
+            
             image = Image.open(file_path)
+            import pytesseract
             text = pytesseract.image_to_string(image)
             return text
         except Exception as e:

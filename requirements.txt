@@ -1,34 +1,31 @@
-# AI Legal Document Demystifier - Dependencies
-# Optimized for Streamlit Cloud deployment
+# AI Legal Document Demystifier - Streamlit Cloud Compatible
+# Streamlit Cloud deployment optimized dependencies
 
 # Core data processing libraries
-numpy>=1.21.0,<1.25.0
-pandas>=1.5.0,<2.1.0
-matplotlib>=3.5.0,<3.8.0
-seaborn>=0.11.0,<0.13.0
+numpy>=1.21.0
+pandas>=1.5.0
+matplotlib>=3.5.0
+seaborn>=0.11.0
 
 # Document processing libraries
 pypdf2==3.0.1
-python-docx>=0.8.11,<1.1.0
-Pillow>=9.0.0,<10.1.0
+python-docx>=0.8.11
+Pillow>=9.0.0
 
 # Web and API libraries
-requests>=2.25.0,<2.32.0
-streamlit>=1.28.0,<1.38.0
-python-dotenv>=1.0.0,<1.1.0
+requests>=2.25.0
+streamlit>=1.28.0
+python-dotenv>=1.0.0
 
 # AI and ML libraries
-openai>=1.0.0,<1.9.0
+openai>=1.0.0
 
-# NLP and analysis libraries
-spacy>=3.4.0,<3.8.0
+# NLP libraries (without spacy models for now)
+spacy>=3.4.0
 
 # Visualization libraries
-plotly>=5.10.0,<5.18.0
+plotly>=5.10.0
 
-# Optional: OCR (requires system dependencies)
-pytesseract>=0.3.8,<0.4.0
-
-# Optional: Additional ML libraries
-scikit-learn>=1.1.0,<1.4.0
-networkx>=2.8.0,<3.3.0
+# Basic ML libraries
+scikit-learn>=1.1.0
+networkx>=2.8.0
