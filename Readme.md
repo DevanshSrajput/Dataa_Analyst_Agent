@@ -1,4 +1,6 @@
 # ⚖️ AI Legal Document Demystifier
+# Preview
+https://github.com/user-attachments/assets/c61dd2fc-c277-4055-90d5-64ad90d99fe1
 
 > **Generative AI for Demystifying Legal Documents**  
 > _Simplifying complex legal documents into clear, accessible guidance, empowering users to make informed decisions._
