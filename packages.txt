@@ -1,5 +1,2 @@
-# Streamlit Cloud uses Debian-based images. pytesseract is a Python
-# wrapper around the `tesseract` binary, which must be installed at
-# the OS level for OCR (image uploads) to work.
 tesseract-ocr
 libtesseract-dev

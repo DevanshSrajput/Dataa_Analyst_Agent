@@ -441,44 +441,66 @@ next save.
 
 ---
 
-### G16. ~~Streamlit Cloud deploy failed: `packages.txt` had CRLF line endings~~ (done)
+### G16. ~~Streamlit Cloud deploy failed: `packages.txt` parser ignores `#` comments~~ (done)
 
-**Status:** ✅ done. On the first deploy attempt after the
-OpenCode Zen migration, Streamlit Cloud's `apt-get install`
-rejected `packages.txt` with a wall of `E: Unable to locate
-package <word>` errors. Root cause: every line in the file
-ended with `\r\n`. Streamlit Cloud's parser splits on `\n`
-and treats the trailing `\r` as part of the package name, so
-the comment `# Streamlit Cloud uses…` was being passed to
-apt as four separate "package names": `Streamlit`, `Cloud`,
-`uses`, etc. The real packages (`tesseract-ocr`,
-`libtesseract-dev`) never got installed.
+**Status:** ✅ done. **Two deploys in a row failed** with a
+wall of `E: Unable to locate package <word>` errors against
+every word in the comment lines of `packages.txt`. Initial
+diagnosis pointed at CRLF line endings; that was a red
+herring. The real root cause took a second deploy to pin
+down.
+
+**The real bug — and how we got there:**
+
+Streamlit Cloud's `packages.txt` parser does NOT respect
+shell-style `#` comments. It splits the file on **every
+whitespace character** (newlines, spaces, tabs) and passes
+each token to `apt-get install`. So a comment like
+`# Streamlit Cloud uses Debian-based images` becomes
+**seven bogus package names** in apt's eyes: `Streamlit`,
+`Cloud`, `uses`, `Debian-based`, etc. Apt dutifully reports
+`E: Unable to locate package <word>` for each one and bails
+out before the real packages (`tesseract-ocr`,
+`libtesseract-dev`) ever get installed.
+
+The CRLF theory was wrong because `packages.txt` on
+`origin/main` was verified LF-only (215 bytes, 0 CR, 5 LF)
+in the commit `06b0b2a` and again on `c8f86c1`. The second
+deploy at 19:46 still failed the same way against the same
+LF-only file — proving the parser doesn't care about line
+endings, it cares about the content of every whitespace-
+separated token. The CRLF rewrite I did in the working
+tree was a no-op (the file was already clean); the fix
+that *actually* worked was deleting the comments entirely.
 
 **What changed:**
 
-1. Rewrote `packages.txt` with LF-only line endings.
-2. Rewrote 9 other source files that had the same CRLF
-   drift: `Agent.py`, `app.py`, `Readme.md`,
-   `requirements.txt`, `.env`, `.env.example`, `.gitignore`,
-   `.streamlit/config.toml`, `.vscode/settings.json`,
-   `LICENSE`. (The `.gitattributes` from G15 now locks
-   these to LF on future checkouts.)
-3. Added `PackagesTxtSchemaTests` (6 tests, runs on bare
-   env) to lock the contract: no CRLF, no bare `\r`, every
-   non-comment line is a single token (no spaces), no
-   duplicate package names, file ends with a newline, and
-   no shell-syntax leakage (no `apt-get`, no backticks, no
-   `&&`). Plus a sanity check that the file is non-empty.
+1. Stripped all comments from `packages.txt`. The file is
+   now two lines, no comments, no whitespace inside any
+   line, exactly the shape that survives a whitespace-split
+   parser. (Comment context moved to the test docstring
+   and to the README's "How to add a package" section.)
+2. Rewrote 9 other source files that had CRLF drift (from
+   the initial wrong diagnosis): `Agent.py`, `app.py`,
+   `Readme.md`, `requirements.txt`, `.env`, `.env.example`,
+   `.gitignore`, `.streamlit/config.toml`,
+   `.vscode/settings.json`, `LICENSE`. The `.gitattributes`
+   from G15 now locks these to LF on future checkouts.
+3. Added `PackagesTxtSchemaTests` (8 tests, runs on bare
+   env). Lead test: `test_no_comment_lines` — fails the
+   build if any line starts with `#` or contains an inline
+   `#`. Other tests: no CRLF, no bare `\r`, no spaces or
+   tabs in package lines, no duplicate packages, file ends
+   with a newline, no shell-syntax leakage, file is
+   non-empty.
 4. Bonus: fixed a real drift bug discovered while writing
    the secrets-wiring test — the code was reading
    `OPENCODE_ZEN_API_KEY` from `st.secrets`, but the README
    and the in-app sidebar both tell users to set
    `OPENCODE_API_KEY`. The new `SecretsWiringTests` (7
-   tests) lock the resolved contract (see G17 below).
+   tests) lock the resolved contract.
 
-**Test count: 73 → 86** (added 7 secrets tests, 6 packages
-tests, 1 already-counted elsewhere). All 86 green on
-bare env.
+**Test count: 73 → 87 → 88.** All green on bare env.
 
 ---
 

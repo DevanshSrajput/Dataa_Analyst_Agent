@@ -1488,20 +1488,28 @@ class PackagesTxtSchemaTests(unittest.TestCase):
     """Lock the `packages.txt` contract that Streamlit Cloud's
     deploy pipeline depends on.
 
-    Background: Streamlit Cloud parses `packages.txt` and passes
-    every whitespace-separated token to `apt-get install` against
-    a Debian-based image. The deploy will fail with a wall of
-    `E: Unable to locate package <word>` errors if the file:
+    Hard-won background (from the v3.1 deploy regression — see
+    G16 in ISSUES.md):
 
-      1. Has CRLF line endings (apt's parser treats \\r as part
-         of the package name, so a comment like `# foo\\r` gets
-         passed as the package name `foo\\r` to apt).
-      2. Has a non-`#` line that contains spaces (each space-
-         separated word becomes a "package name").
-      3. References a package that doesn't exist in the Debian
-         repos.
-      4. Has duplicate entries (wastes time, no functional
-         impact, but indicates a contributor typo).
+    Streamlit Cloud's `packages.txt` parser splits the file on
+    EVERY whitespace character (newlines, spaces, tabs) and
+    passes each token to `apt-get install`. It does NOT respect
+    `#` shell-style comments — every word in a comment becomes
+    a "package name" in apt's eyes, and the deploy fails with
+    a wall of `E: Unable to locate package <word>` errors
+    before the real packages are ever installed.
+
+    The two deploy-blockers we've hit in the field:
+
+      1. CRLF line endings (apt treats \\r as part of the
+         package name).
+      2. ANY line starting with `#` — even with LF endings,
+         the comment text is split word-by-word and passed
+         to apt as a list of bogus package names.
+
+    The fix is to keep the file minimal: a list of package
+    names, one per line, no comments, no whitespace inside
+    any line, no duplicate entries.
 
     These tests catch all four classes at unit-test time on
     bare env — no Agent, no streamlit, no network.
@@ -1516,13 +1524,40 @@ class PackagesTxtSchemaTests(unittest.TestCase):
         cls.text = cls.bytes_data.decode("utf-8")
 
     # ------------------------------------------------------------------
-    # 1. Line endings: LF only. The whole reason the deploy broke.
+    # 1. No comments. Streamlit Cloud's parser splits on every
+    #    whitespace and ignores #, so a comment line is a deploy
+    #    block. This is the single most important rule.
+    # ------------------------------------------------------------------
+
+    def test_no_comment_lines(self):
+        for i, raw in enumerate(self.text.splitlines(), 1):
+            self.assertFalse(
+                raw.lstrip().startswith("#"),
+                f"Line {i!r} is a `#` comment: {raw!r}. Streamlit "
+                f"Cloud's packages.txt parser splits on whitespace "
+                f"and does NOT respect # comments — every word in "
+                f"the comment becomes a bogus 'package name' in "
+                f"apt's eyes, and the deploy fails with `E: Unable "
+                f"to locate package <word>` for every word. The "
+                f"file must contain ONLY package names, one per "
+                f"line, no comments.",
+            )
+            # Also forbid inline # — `package # comment` is the
+            # same disaster at the word level.
+            if raw.strip():
+                self.assertNotIn(
+                    "#", raw,
+                    f"Line {i!r} contains an inline `#`: {raw!r}. "
+                    f"Inline `#` is also unsafe; remove it.",
+                )
+
+    # ------------------------------------------------------------------
+    # 2. Line endings: LF only.
     # ------------------------------------------------------------------
 
     def test_no_crlf_line_endings(self):
         # Streamlit Cloud's apt parser is line-oriented and treats
-        # the \r as part of the package name. This is the single
-        # biggest deploy-blocker for this file.
+        # the \r as part of the package name.
         self.assertNotIn(
             b"\r\n", self.bytes_data,
             "packages.txt has CRLF line endings; Streamlit Cloud's "
@@ -1539,43 +1574,41 @@ class PackagesTxtSchemaTests(unittest.TestCase):
 
     def test_ends_with_newline(self):
         # Most POSIX tools (including the shell `apt` invokes)
-        # expect the final line to end with a newline. A file
-        # without a trailing newline is a frequent source of
-        # "no newline at end of file" warnings on diffs.
+        # expect the final line to end with a newline.
         self.assertTrue(
             self.bytes_data.endswith(b"\n"),
             "packages.txt must end with a newline.",
         )
 
     # ------------------------------------------------------------------
-    # 2. No spaces in non-comment lines.
+    # 3. No whitespace in any package line (no spaces, no tabs).
     # ------------------------------------------------------------------
 
-    def test_no_spaces_in_package_lines(self):
+    def test_no_whitespace_in_package_lines(self):
         for i, raw in enumerate(self.text.splitlines(), 1):
-            stripped = raw.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
+            # Every non-blank line is a single token.
             self.assertNotIn(
-                " ", stripped,
-                f"Line {i!r} contains a space in a non-comment line: "
-                f"{raw!r}. Streamlit Cloud passes every whitespace-"
-                f"separated token to apt, so spaces are not allowed "
-                f"in package names.",
+                " ", raw,
+                f"Line {i!r} contains a space: {raw!r}. Streamlit "
+                f"Cloud splits the file on every whitespace, so "
+                f"spaces inside a line split the package name into "
+                f"multiple bogus names.",
+            )
+            self.assertNotIn(
+                "\t", raw,
+                f"Line {i!r} contains a tab: {raw!r}. Same reason "
+                f"as spaces — every tab becomes a split point.",
             )
 
     # ------------------------------------------------------------------
-    # 3. No blank or whitespace-only package lines.
+    # 4. No blank or whitespace-only package lines.
     # ------------------------------------------------------------------
 
     def test_no_blank_package_lines(self):
         for i, raw in enumerate(self.text.splitlines(), 1):
             if not raw.strip():
-                # A blank line is fine (apt skips it), but a line
-                # with only whitespace is not — it would be passed
-                # to apt as an empty package name. In practice the
-                # prior rule catches this, but a dedicated check
-                # gives a clearer error message.
+                # A line with only whitespace would be passed to
+                # apt as an empty package name.
                 self.assertEqual(
                     raw, "",
                     f"Line {i!r} is whitespace-only; blank lines "
@@ -1583,14 +1616,14 @@ class PackagesTxtSchemaTests(unittest.TestCase):
                 )
 
     # ------------------------------------------------------------------
-    # 4. No duplicate package names.
+    # 5. No duplicate package names.
     # ------------------------------------------------------------------
 
     def test_no_duplicate_packages(self):
-        seen = []
+        seen = set()
         for raw in self.text.splitlines():
             stripped = raw.strip()
-            if not stripped or stripped.startswith("#"):
+            if not stripped:
                 continue
             self.assertNotIn(
                 stripped, seen,
@@ -1598,16 +1631,16 @@ class PackagesTxtSchemaTests(unittest.TestCase):
                 f"duplicate entry; Streamlit Cloud installs each "
                 f"package independently.",
             )
-            seen.append(stripped)
+            seen.add(stripped)
 
     # ------------------------------------------------------------------
-    # 5. Sanity: at least one package, and the file is not empty.
+    # 6. Sanity: at least one package, and the file is not empty.
     # ------------------------------------------------------------------
 
     def test_has_at_least_one_package(self):
         pkgs = [
             line.strip() for line in self.text.splitlines()
-            if line.strip() and not line.strip().startswith("#")
+            if line.strip()
         ]
         self.assertGreaterEqual(
             len(pkgs), 1,
@@ -1617,7 +1650,7 @@ class PackagesTxtSchemaTests(unittest.TestCase):
         )
 
     # ------------------------------------------------------------------
-    # 6. Source-level contract: the file must not have any inline
+    # 7. Source-level contract: the file must not have any inline
     #    `apt-get install` or shell-style backticks (we are pinning
     #    a list of names, not a script).
     # ------------------------------------------------------------------
@@ -1625,7 +1658,7 @@ class PackagesTxtSchemaTests(unittest.TestCase):
     def test_pure_list_not_script(self):
         for i, raw in enumerate(self.text.splitlines(), 1):
             stripped = raw.strip()
-            if not stripped or stripped.startswith("#"):
+            if not stripped:
                 continue
             for forbidden in ("apt-get", "apt ", "$(", "`", "&&", "||", ";"):
                 self.assertNotIn(
