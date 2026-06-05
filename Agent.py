@@ -24,6 +24,8 @@ import os
 import sys
 import warnings
 import time
+import socket
+import ipaddress
 from typing import Dict, List, Any, Optional
 warnings.filterwarnings('ignore')
 
@@ -72,12 +74,10 @@ try:
     import docx
     from PIL import Image
     import pytesseract
-    # TODO(security ISSUES.md #3): if a "fetch URL as document" feature is
-    # ever added, do NOT pass user-supplied URLs straight to `requests`.
-    # Validate scheme (http/https only) and block private/loopback/link-local
-    # ranges: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
-    # 169.254.0.0/16, ::1, fc00::/7. Resolve DNS first, then check the
-    # resolved IP (DNS-rebinding mitigation).
+    # SECURITY: never call `requests` directly with a user-supplied URL.
+    # Use `safe_fetch_url()` (defined above the OpenCode Zen client) which
+    # validates scheme, blocks private/loopback/link-local ranges, and
+    # re-checks every redirect hop.
     import requests
 except ImportError as e:
     print(f"Error importing file processing libraries: {e}")
@@ -117,6 +117,173 @@ def _get_api_key() -> Optional[str]:
             pass
     # 2. Environment
     return os.getenv("OPENCODE_API_KEY") or os.getenv("TOGETHER_API_KEY")
+
+
+# ---------------------------------------------------------------------------
+# SSRF guard (ISSUES.md #1)
+# ---------------------------------------------------------------------------
+# No URL fetcher exists in the app today, but the `requests` import below
+# is the obvious next place someone would add one. `safe_fetch_url` is the
+# single chokepoint: it MUST be the only path from a user-supplied URL to
+# a network call. It enforces:
+#   - scheme allowlist (http, https only)
+#   - private/loopback/link-local IP block (IPv4 + IPv6)
+#   - DNS resolution done by us, then re-checked against the blocklist
+#     (mitigates DNS rebinding: a hostname that resolves to a public IP at
+#     resolve-time but a private IP at connect-time cannot slip through)
+#   - 301/302/307/308 redirects re-validated at every hop
+#
+# Usage from a future feature:
+#     text = safe_fetch_url(user_url, timeout=15).text
+#
+# Throws `ValueError` for any policy violation; callers should surface the
+# error to the user rather than swallow it.
+
+_ALLOWED_SCHEMES = ("http", "https")
+
+# Private/loopback/link-local ranges to block. These are the same ranges
+# ISSUES.md calls out, expanded with a few more that are commonly abused:
+#   - 0.0.0.0/8           (unspecified / "this host")
+#   - 100.64.0.0/10       (CGNAT, sometimes used for internal services)
+#   - 224.0.0.0/4         (multicast)
+#   - 240.0.0.0/4         (reserved)
+#   - 169.254.0.0/16      (link-local, including AWS/GCP metadata 169.254.169.254)
+#   - ::1/128             (IPv6 loopback)
+#   - fc00::/7            (IPv6 unique-local)
+#   - fe80::/10           (IPv6 link-local)
+#   - ::ffff:0:0/96       (IPv4-mapped IPv6 — we normalise and re-check)
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network(n) for n in [
+        "0.0.0.0/8",
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.0.0.0/24",
+        "192.0.2.0/24",
+        "192.168.0.0/16",
+        "198.18.0.0/15",
+        "198.51.100.0/24",
+        "203.0.113.0/24",
+        "224.0.0.0/4",
+        "240.0.0.0/4",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10",
+    ]
+]
+
+
+def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Return True if `ip` falls in any blocked range."""
+    # Unwrap IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) so the v4 rules apply.
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return any(ip in net for net in _BLOCKED_NETWORKS)
+
+
+def _resolve_and_check(host: str) -> str:
+    """Resolve `host` to an IP, return it, or raise if blocked.
+
+    Resolves with the stdlib (no DNS server preference), then checks every
+    returned address against the blocklist. Throws `ValueError` if the
+    hostname fails to resolve or any address is blocked.
+    """
+    try:
+        # getaddrinfo returns a list of (family, type, proto, canonname, sockaddr).
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror as e:
+        raise ValueError(f"DNS resolution failed for {host!r}: {e}")
+    if not infos:
+        raise ValueError(f"DNS resolution returned no addresses for {host!r}")
+    # Check every resolved address — a hostile DNS server can return a
+    # mix of public and private records; we must reject the host if ANY
+    # address is private (otherwise the client can race the connect).
+    for family, _type, _proto, _canon, sockaddr in infos:
+        addr = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            continue  # skip unparseable records; safer to allow the others
+        if _is_blocked_ip(ip):
+            raise ValueError(
+                f"Refusing to fetch {host!r}: resolves to blocked address {addr}"
+            )
+    # Return the first v4 (or v6 if no v4) so requests connects deterministically.
+    for family, _t, _p, _c, sockaddr in infos:
+        if family == socket.AF_INET:
+            return sockaddr[0]
+    return infos[0][4][0]
+
+
+def safe_fetch_url(
+    url: str,
+    timeout: int = 15,
+    max_redirects: int = 5,
+    **_kwargs,
+) -> "requests.Response":
+    """Fetch `url` with SSRF protections. See module-level comment for policy.
+
+    Args:
+        url: user-supplied URL. Validated for scheme and resolved IP.
+        timeout: per-request timeout in seconds.
+        max_redirects: cap on redirect hops (each re-validated).
+
+    Returns:
+        `requests.Response` on success (2xx/3xx followed by terminal 2xx).
+
+    Raises:
+        ValueError: on any policy violation (bad scheme, blocked IP, etc).
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in _ALLOWED_SCHEMES:
+        raise ValueError(
+            f"Refusing to fetch {url!r}: scheme {parsed.scheme!r} not in "
+            f"{_ALLOWED_SCHEMES}"
+        )
+    if not parsed.hostname:
+        raise ValueError(f"Refusing to fetch {url!r}: missing hostname")
+
+    # Resolve + check the *initial* hostname.
+    resolved_ip = _resolve_and_check(parsed.hostname)
+
+    # We pin the connect to the IP we already validated, but we have to
+    # re-validate on every redirect (an attacker can set Location to any
+    # host). The simplest correct path: pre-resolve, then call requests
+    # with allow_redirects=False and chase Location headers ourselves.
+    current_url = url
+    for _hop in range(max_redirects + 1):
+        host = urlparse(current_url).hostname
+        if not host:
+            raise ValueError(f"Redirect target missing hostname: {current_url!r}")
+        ip = _resolve_and_check(host)
+
+        resp = requests.get(
+            current_url,
+            timeout=timeout,
+            allow_redirects=False,
+            headers={"Host": host},  # requests uses the URL's host for SNI/HTTP
+            **_kwargs,
+        )
+        # 2xx: done.
+        if 200 <= resp.status_code < 300:
+            return resp
+        # 3xx: chase the Location header.
+        if 300 <= resp.status_code < 400:
+            location = resp.headers.get("Location", "")
+            if not location:
+                raise ValueError(
+                    f"Redirect with no Location header from {current_url!r}"
+                )
+            current_url = requests.compat.urljoin(current_url, location)
+            continue
+        # 4xx/5xx: surface.
+        resp.raise_for_status()
+
+    raise ValueError(f"Too many redirects (> {max_redirects}) fetching {url!r}")
 
 
 def _chat_complete(

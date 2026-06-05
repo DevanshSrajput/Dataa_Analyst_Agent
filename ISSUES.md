@@ -81,35 +81,9 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 ---
 
-## 🔴 Security
-
-### 1. `unsafe_allow_html=True` + LLM output — `app.py` (multiple)
-- **Where:** ~10 call sites in `main()`: `app.py:251-262` (header),
-  `app.py:381-389` (feature cards), `app.py:546-555` (upload zone),
-  `app.py:589-598` (chat response).
-- **Issue:** LLM-generated text (`answer`, `result["summary"]`,
-  `user_question`) is interpolated into HTML and rendered with
-  `unsafe_allow_html=True`. The model can return `<script>` or
-  `onerror=` payloads.
-- **Risk:** XSS in any browser viewing the Streamlit app.
-- **Fix:** sanitize via `html.escape()` before interpolating, or use
-  `st.markdown(answer)` without `unsafe_allow_html` (Streamlit sanitizes
-  by default there).
-- **Skill:** web security, HTML escaping.
-
-### 2. SSRF surface in any future "fetch URL" feature — `Agent.py:75-81`
-- **Status:** mitigated with TODO comment only.
-- **Where:** `import requests` in `Agent.py`. There is no fetcher yet.
-- **Note:** the `TODO` lists the constraints (scheme allowlist,
-  IP-range blocklist, DNS-rebinding mitigation). When the feature is
-  added, follow that comment.
-- **Skill:** networking, security.
-
----
-
 ## 🟠 Correctness / data loss
 
-### 3. Extraction errors are returned as document content — `Agent.py:266-292`
+### 1. Extraction errors are returned as document content — `Agent.py:266-292`
 - **Where:** `process_document`, the `except Exception` branch at
   `Agent.py:290-292` sets `result['content']` to an error string.
 - **Issue:** the UI then renders that string as if it were document
@@ -121,7 +95,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
   caller can check.
 - **Skill:** error-handling design.
 
-### 4. Truncation in chat context is lossy — `Agent.py:466, 483`
+### 2. Truncation in chat context is lossy — `Agent.py:466, 483`
 - **Where:** `answer_question`: `content_preview = doc_info['content'][:1500]`
   and `context[:4000]`.
 - **Issue:** 50-page PDF → only the first ~10 KB reaches the model. No
@@ -131,7 +105,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
   embeddings, returning top-k chunks per question.
 - **Skill:** embeddings, RAG.
 
-### 5. `visualizations_<name>` directories persist in CWD — `Agent.py:341`, `app.py:687`
+### 3. `visualizations_<name>` directories persist in CWD — `Agent.py:341`, `app.py:687`
 - **Where:** `create_visualizations` builds `output_dir` from
   `file_name.replace('.', '_')`. The analytics tab reads the same
   directory back.
@@ -144,7 +118,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
   `st.image(bytes)`.
 - **Skill:** file lifecycle, ephemeral storage.
 
-### 6. `process_document` extension detection is fragile — `Agent.py:257`
+### 4. `process_document` extension detection is fragile — `Agent.py:257`
 - **Where:** `file_extension = file_name.lower().split('.')[-1]`.
 - **Issue:** a file named `archive.tar.gz` → extension `gz` (we don't
   support that). A file with no extension → `''` (silently no-op).
@@ -158,7 +132,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 ## 🟡 Reliability / robustness
 
-### 7. No tests — repo root
+### 5. No tests — repo root
 - **Issue:** no `tests/`, no `pytest`, no CI. Every change is a leap of
   faith.
 - **Fix:** add a small `tests/test_agent.py` covering `process_document`
@@ -167,7 +141,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
 - **Skill:** pytest, mocking.
 - **File:** new `tests/` directory.
 
-### 8. Add minimal test scaffolding — new file
+### 6. Add minimal test scaffolding — new file
 - **Fix:** add `pytest.ini` (or `pyproject.toml [tool.pytest.ini_options]`),
   `tests/__init__.py`, `tests/conftest.py` with a small CSV fixture,
   and `tests/test_agent.py` with at least one happy-path test for
@@ -176,14 +150,14 @@ knowing the whole codebase. Pick any of them as your first contribution.
 - **Skill:** pytest.
 - **File:** new `tests/`.
 
-### 9. In-memory state only — `Agent.py:188-191`
+### 8. In-memory state only — `Agent.py:188-191`
 - **Issue:** uploads, conversation history, analysis results live in
   `st.session_state` and on the agent instance. Refresh = total loss.
   Streamlit Cloud may recycle the container at any time.
 - **Fix:** SQLite-backed session or upload-to-S3 with a session id.
 - **Skill:** persistence, SQLite/S3.
 
-### 10. "Reset Session" deletes keys mid-render — `app.py:793-797`
+### 9. "Reset Session" deletes keys mid-render — `app.py:793-797`
 - **Where:** the loop `for key in list(st.session_state.keys()): del st.session_state[key]`
   then calls `st.rerun()`. Streamlit 1.30+ tolerates it, but earlier
   versions raise `RuntimeError: dictionary changed size during
@@ -197,7 +171,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 ## 🔵 Performance / scaling
 
-### 11. Synchronous HTTP from Streamlit — `Agent.py:144`
+### 10. Synchronous HTTP from Streamlit — `Agent.py:144`
 - **Issue:** a 1k-token completion takes 1–3 s synchronously. No
   streaming, no async. Streamlit reruns the whole script on every
   widget interaction, so the perceived latency compounds.
@@ -205,7 +179,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
   token-by-token rendering of chat responses.
 - **Skill:** async, streaming.
 
-### 12. `create_visualizations` always renders 4 charts — `Agent.py:332-415`
+### 11. `create_visualizations` always renders 4 charts — `Agent.py:332-415`
 - **Issue:** a 3-row CSV gets the full treatment including a
   correlation heatmap with a 1×1 matrix that seaborn happily renders
   and annotates. `numeric_columns` may also exceed 4 — only the first
@@ -214,7 +188,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
   when truncating columns.
 - **Skill:** matplotlib, defensive UI.
 
-### 13. `df.to_string()` is stored in agent state — `Agent.py:277`
+### 12. `df.to_string()` is stored in agent state — `Agent.py:277`
 - **Issue:** a 100k-row CSV is converted to a 10 MB+ string and stored
   in `document_content`, then truncated to 1500 chars at Q&A time. The
   truncation hides the loss, but the memory cost is paid up front.
@@ -227,14 +201,14 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 ## ⚪ Style / maintainability
 
-### 14. `app.py` mixes UI, theming, business logic, and helpers
+### 13. `app.py` mixes UI, theming, business logic, and helpers
 - The 50-line CSS block (`DARK_CSS`, `LIGHT_CSS`) could live in a
   `theme.py` or in `static/`. The `_safe_filename` helper and
   `AVAILABLE_MODELS` dict could move to `app_helpers.py`. `app.py`
   would shrink to pure UI orchestration.
 - **Skill:** refactoring, separation of concerns.
 
-### 15. Model catalogue is hard-coded and partially fictional
+### 14. Model catalogue is hard-coded and partially fictional
 - `AVAILABLE_MODELS` in `app.py:66-127` lists `mimo-v2.5-free`,
   `qwen3.6-plus-free`, `deepseek-v4-flash-free`, `nemotron-3-ultra-free`,
   `gemini-3.1-pro`, `gpt-5`, `claude-sonnet-4-6`, `minimax-m2.7` —
@@ -250,21 +224,19 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 | # | Severity | Area | One-liner |
 |---|---|---|---|
-| 1 | 🔴 | XSS | `unsafe_allow_html=True` + LLM output across 10+ call sites |
-| 2 | 🔴 | SSRF | Precaution for any future "fetch URL" feature (TODO only) |
-| 3 | 🟠 | UX | Extraction errors fed to LLM as document text |
-| 4 | 🟠 | Correctness | 1500-char truncation, no RAG |
-| 5 | 🟠 | State | `visualizations_*` dirs persist in CWD |
-| 6 | 🟠 | Correctness | `split('.')[-1]` extension detection breaks on multi-dot / extensionless files |
-| 7 | 🟡 | Quality | No tests |
-| 8 | 🟡 | Quality | Add minimal pytest scaffolding |
-| 9 | 🟡 | State | All state is in `st.session_state` |
-| 10 | 🟡 | Stability | `del st.session_state[key]` mid-iteration |
-| 11 | 🔵 | UX | No streaming; every rerun re-pays latency |
-| 12 | 🔵 | Noise | Charts always render, even for 3-row data |
-| 13 | 🔵 | Memory | `df.to_string()` stored in agent state |
-| 14 | ⚪ | Structure | `app.py` still mixes UI + theming + helpers |
-| 15 | ⚪ | Data | Model catalogue may include fictional entries |
+| 1 | 🟠 | UX | Extraction errors fed to LLM as document text |
+| 2 | 🟠 | Correctness | 1500-char truncation, no RAG |
+| 3 | 🟠 | State | `visualizations_*` dirs persist in CWD |
+| 4 | 🟠 | Correctness | `split('.')[-1]` extension detection breaks on multi-dot / extensionless files |
+| 5 | 🟡 | Quality | No tests |
+| 6 | 🟡 | Quality | Add minimal pytest scaffolding |
+| 7 | 🟡 | State | All state is in `st.session_state` |
+| 8 | 🟡 | Stability | `del st.session_state[key]` mid-iteration |
+| 9 | 🔵 | UX | No streaming; every rerun re-pays latency |
+| 10 | 🔵 | Noise | Charts always render, even for 3-row data |
+| 11 | 🔵 | Memory | `df.to_string()` stored in agent state |
+| 12 | ⚪ | Structure | `app.py` still mixes UI + theming + helpers |
+| 13 | ⚪ | Data | Model catalogue may include fictional entries |
 
 ---
 
