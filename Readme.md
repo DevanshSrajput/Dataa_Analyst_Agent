@@ -219,7 +219,7 @@ If `streamlit` is on your `PATH` you can also do `python -m streamlit run app.py
 
 ## 🧪 Running the Tests
 
-The repo ships with a 41-test suite under `tests/` that covers extraction
+The repo ships with a 49-test suite under `tests/` that covers extraction
 failures, BM25 retrieval, the SSRF policy, the path-traversal-safe
 filename helper, and the extension allowlist. Run it with either:
 
@@ -261,7 +261,7 @@ Dataa_Analyst_Agent/
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py     # Shared fixtures (works under pytest OR unittest)
-│   └── test_agent.py   # 41 tests covering extraction, retrieval, SSRF, persistence, reset path, streaming
+│   └── test_agent.py   # 49 tests covering extraction, retrieval, SSRF, persistence, reset path, streaming, viz guards
 └── venv/               # Local virtualenv (not committed)
 ```
 
@@ -525,7 +525,7 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 <details>
 <summary><h3 style="display:inline">Test coverage</h3></summary>
 
-- **41 tests** in `tests/test_agent.py` (one new optional dep:
+- **49 tests** in `tests/test_agent.py` (one new optional dep:
   `httpx`, used lazily for streaming; runs under stdlib `unittest` or
   `pytest`).
 - Coverage: extension detection + allowlist, `_safe_filename` for
@@ -533,9 +533,11 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
   BM25 retrieval surfaces the right chunk, `safe_fetch_url` blocks
   unsafe schemes + private IP ranges, BM25 ranker correctness,
   SQLite persistence across container recycle, Reset Session
-  handler (no mid-iteration `del`, wipes on-disk store), and
+  handler (no mid-iteration `del`, wipes on-disk store),
   token-by-token streaming (SSE parser, error surfacing, full-text
-  persistence).
+  persistence), and visualization guards (empty/short dfs skip
+  the right chart types, column truncation is surfaced in the
+  label).
 - No network calls, no heavy-dep imports in the test path. Full
   suite finishes in ~100 ms.
 
@@ -547,7 +549,7 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 - `app.py` — Streamlit UI (the entrypoint for `streamlit run`).
 - `Agent.py` — engine: extractors, BM25 retriever, OpenCode Zen
   client, `safe_fetch_url` SSRF chokepoint.
-- `tests/` — 41 tests + shared fixtures (`conftest.py`).
+- `tests/` — 49 tests + shared fixtures (`conftest.py`).
 - `pyproject.toml` — `[tool.pytest.ini_options]` for the test suite.
 - `ISSUES.md` — personal-tracked audit; updated as each fix lands.
 - `.streamlit/config.toml` — Cloud-friendly defaults (port 8501, headless).
@@ -564,7 +566,7 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 5. **Blind [:4000] truncation** → BM25 retrieval over pre-chunked text
 6. **`visualizations_*` dirs in CWD** → in-memory bytes + `tempfile.gettempdir()`
 7. **Hardcoded extension list** → `Agent._SUPPORTED_EXTENSIONS` (single source of truth)
-8. **No tests** → 41-test suite under `tests/`
+8. **No tests** → 49-test suite under `tests/`
 9. **In-memory state lost on container recycle** → SQLite store under
    `tempfile.gettempdir()`, hydrated on init, write-through on every
    mutation. No new deps.
@@ -577,6 +579,12 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
     `stream_answer` mirrors `answer_question`'s side effects
     (conversation history, on-disk store) so a streamed answer
     and a non-streamed answer see the same persistence path.
+12. **Charts always render, even for 3-row data** →
+    `create_visualizations` now picks chart types that match the
+    data: empty df → no charts, <3 rows → no histogram, <5 rows
+    → no box plot, <2 numeric cols → no heatmap, and column
+    truncation is surfaced in the label as
+    `"Distributions (showing 4 of 12)"`.
 
 </details>
 

@@ -822,5 +822,120 @@ class StreamingTests(unittest.TestCase):
                 agent.close()
 
 
+# ---------------------------------------------------------------------------
+# ISSUES.md #1 (🔵) — create_visualizations must not always render 4
+# charts. The new code picks chart types that match what the data
+# actually supports, and surfaces column truncation in the label.
+# ---------------------------------------------------------------------------
+
+@_require_agent()
+class CreateVisualizationsGuardTests(unittest.TestCase):
+    """No charts should be drawn for inputs that can't support them,
+    and the label should reflect any column truncation."""
+
+    def setUp(self):
+        import pandas as pd
+        self.pd = pd
+
+    def _viz(self, df, name="data.csv"):
+        agent = Agent.DocumentAnalystAgent(api_key="k", model="m")
+        try:
+            return agent.create_visualizations(df, name)
+        finally:
+            agent.close()
+
+    def test_empty_df_returns_empty(self):
+        df = self.pd.DataFrame()
+        out = self._viz(df)
+        self.assertEqual(out, [])
+
+    def test_zero_row_df_returns_empty(self):
+        df = self.pd.DataFrame({"a": [1, 2, 3]}).iloc[0:0]
+        out = self._viz(df)
+        self.assertEqual(out, [])
+
+    def test_single_row_skips_histogram_and_box(self):
+        # 1 row, 1 numeric col: histogram and box plot would be
+        # nonsense (no spread). Heatmap would be 1x1, also skipped.
+        df = self.pd.DataFrame({"score": [42]})
+        out = self._viz(df)
+        labels = [label for label, _ in out]
+        self.assertNotIn(
+            "Distributions", labels,
+            "single-row df must not produce a histogram",
+        )
+        self.assertNotIn(
+            "Box Plots", labels,
+            "single-row df must not produce a box plot",
+        )
+        self.assertNotIn(
+            "Correlation Heatmap", labels,
+            "single-column df must not produce a correlation heatmap",
+        )
+
+    def test_three_row_df_produces_no_box_plot(self):
+        # 3 rows: enough for a histogram (1 bin still meaningful as a
+        # "all values here" marker) but box-plot quartiles collapse.
+        df = self.pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+        out = self._viz(df)
+        labels = [label for label, _ in out]
+        self.assertIn("Distributions", labels)
+        self.assertIn("Correlation Heatmap", labels)
+        self.assertNotIn("Box Plots", labels)
+
+    def test_single_numeric_col_skips_heatmap(self):
+        df = self.pd.DataFrame({
+            "score": [10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+        })
+        out = self._viz(df)
+        labels = [label for label, _ in out]
+        self.assertIn("Distributions", labels)
+        self.assertIn("Box Plots", labels)
+        self.assertNotIn(
+            "Correlation Heatmap", labels,
+            "single-column heatmap is a 1x1 of 1.00; skip it",
+        )
+
+    def test_column_truncation_surfaced_in_label(self):
+        # 6 numeric columns, distributions capped at 4. Label must
+        # say "showing 4 of 6" so the user knows data was hidden.
+        df = self.pd.DataFrame({
+            chr(ord("a") + i): list(range(20))
+            for i in range(6)
+        })
+        out = self._viz(df)
+        labels = [label for label, _ in out]
+        dist_label = next(l for l in labels if l.startswith("Distributions"))
+        self.assertIn("showing 4 of 6", dist_label)
+        box_label = next(l for l in labels if l.startswith("Box Plots"))
+        self.assertIn("showing 3 of 6", box_label)
+
+    def test_high_cardinality_categorical_is_skipped(self):
+        # A categorical column with 50 unique values would produce
+        # a bar chart with 50 unreadable bars. The new code filters
+        # those out before drawing.
+        import random
+        random.seed(0)
+        high_card = [f"item_{i}" for i in range(50)]
+        # Repeat to get 100 rows so we have data, not 50 unique rows.
+        high_card = high_card * 2
+        df = self.pd.DataFrame({
+            "label": high_card,
+            "score": [float(i) for i in range(len(high_card))],
+        })
+        out = self._viz(df)
+        labels = [label for label, _ in out]
+        self.assertNotIn("Categorical Bars", labels)
+
+    def test_categorical_with_few_values_renders_bars(self):
+        df = self.pd.DataFrame({
+            "team": ["A", "B", "A", "B", "A", "B"] * 5,
+            "score": list(range(30)),
+        })
+        out = self._viz(df)
+        labels = [label for label, _ in out]
+        self.assertIn("Categorical Bars", labels)
+
+
 if __name__ == "__main__":
     unittest.main()

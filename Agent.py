@@ -1116,6 +1116,23 @@ class DocumentAnalystAgent:
         new layout is a UUID-keyed subdir of `tempfile.gettempdir()`,
         owned by the agent instance and freed by `clear_visualizations`.
 
+        ISSUES.md #1 (always renders 4 charts): the old code drew a
+        2x2 distribution grid even on a 3-row CSV, a 1x1 correlation
+        heatmap, and an empty box-plot row for a single-column frame.
+        The new code picks chart types that match what the data
+        actually supports:
+
+          - `df.empty`            -> return [] (no charts).
+          - rows < 3              -> skip histogram (binned noise).
+          - rows < 5              -> skip box plot (quartiles undefined).
+          - numeric cols < 2      -> skip correlation heatmap.
+          - numeric cols capped   -> first 4 for distributions, 3 for
+                                     box plots; "+N more" appended to
+                                     the label when truncated.
+          - categorical cols      -> capped at 2; the inner loop
+                                     skips columns with >20 unique
+                                     values (those bars are unreadable).
+
         Args:
             df: the DataFrame to chart.
             file_name: kept for backwards-compatible labeling of the
@@ -1123,11 +1140,21 @@ class DocumentAnalystAgent:
 
         Returns:
             List of `(label, bytes)` tuples. May be empty if `df` has
-            no numeric or categorical columns.
+            no numeric or categorical columns, or if the rows are too
+            few to support any of the standard charts.
         """
+        # ---- ISSUES.md #1: empty-frame early return. A truly empty
+        # DataFrame can't support ANY chart. The caller (app.py) already
+        # treats an empty list as "nothing to show".
+        if df is None or len(df) == 0:
+            self.visualizations[file_name] = []
+            self._store.replace_viz(file_name, [])
+            return []
+
         visualizations: List[Tuple[str, bytes]] = []
-        numeric_columns = df.select_dtypes(include=[np.number]).columns
-        categorical_columns = df.select_dtypes(include=['object']).columns
+        numeric_columns = df.select_dtypes(include=[np.number]).columns.tolist()
+        categorical_columns = df.select_dtypes(include=['object']).columns.tolist()
+        n_rows = len(df)
 
         # Lazy-create the per-agent viz dir on first use.
         os.makedirs(self._viz_dir, exist_ok=True)
@@ -1143,54 +1170,94 @@ class DocumentAnalystAgent:
                 data = f.read()
             return (label, data)
 
-        try:
-            # 1. Distribution plots for numeric columns
-            if len(numeric_columns) > 0:
-                fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-                axes = axes.ravel()
-                for i, col in enumerate(numeric_columns[:4]):
-                    if i < len(axes):
-                        df[col].hist(bins=30, ax=axes[i])
-                        axes[i].set_title(f'Distribution of {col}')
-                        axes[i].set_xlabel(col)
-                        axes[i].set_ylabel('Frequency')
-                plt.tight_layout()
-                visualizations.append(_save("Distributions", "distributions.png"))
+        def _truncation_label(base: str, shown: int, total: int) -> str:
+            """Append a "+N more" suffix when we had to drop columns,
+            so the UI surfaces the truncation instead of hiding it.
+            """
+            if shown < total:
+                return f"{base} (showing {shown} of {total})"
+            return base
 
-            # 2. Correlation heatmap
-            if len(numeric_columns) > 1:
+        try:
+            # 1. Distribution plots — only meaningful with >= 3 rows
+            #    (a histogram of 1-2 values is just a single bar).
+            if numeric_columns and n_rows >= 3:
+                n_show = min(4, len(numeric_columns))
+                shown_cols = numeric_columns[:n_show]
+                # Build a grid sized to the columns we actually have
+                # (1, 2, 3, or 4 axes). The old code always built 2x2,
+                # leaving 3/4 axes blank on a 1-column frame.
+                n_cols = n_show
+                n_rows_grid = 1
+                fig, axes = plt.subplots(
+                    n_rows_grid, n_cols,
+                    figsize=(4 * n_cols, 4), squeeze=False,
+                )
+                for i, col in enumerate(shown_cols):
+                    axes[0, i].hist(df[col].dropna(), bins=min(30, n_rows))
+                    axes[0, i].set_title(f'Distribution of {col}')
+                    axes[0, i].set_xlabel(col)
+                    axes[0, i].set_ylabel('Frequency')
+                plt.tight_layout()
+                visualizations.append(_save(
+                    _truncation_label("Distributions", n_show, len(numeric_columns)),
+                    "distributions.png",
+                ))
+
+            # 2. Correlation heatmap — meaningless with < 2 numeric cols.
+            if len(numeric_columns) >= 2:
                 plt.figure(figsize=(10, 8))
                 correlation_matrix = df[numeric_columns].corr()
                 sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', center=0)
                 plt.title('Correlation Heatmap')
                 visualizations.append(_save("Correlation Heatmap", "correlation_heatmap.png"))
 
-            # 3. Box plots for numeric columns
-            if len(numeric_columns) > 0:
-                n_plots = min(3, len(numeric_columns))
-                fig, ax_array = plt.subplots(1, n_plots, figsize=(15, 5), squeeze=False)
-                axes = ax_array.flatten()
-                for i, col in enumerate(numeric_columns[:n_plots]):
-                    df.boxplot(column=col, ax=axes[i])
-                    axes[i].set_title(f'Box Plot of {col}')
+            # 3. Box plots — quartiles are undefined on tiny samples.
+            #    Capped at 3 numeric columns so a 10-column frame gets
+            #    a sane 1x3 layout instead of an unreadable 1x10 row.
+            if numeric_columns and n_rows >= 5:
+                n_show = min(3, len(numeric_columns))
+                shown_cols = numeric_columns[:n_show]
+                fig, ax_array = plt.subplots(
+                    1, n_show, figsize=(5 * n_show, 5), squeeze=False,
+                )
+                for i, col in enumerate(shown_cols):
+                    df.boxplot(column=col, ax=ax_array[0, i])
+                    ax_array[0, i].set_title(f'Box Plot of {col}')
                 plt.tight_layout()
-                visualizations.append(_save("Box Plots", "box_plots.png"))
+                visualizations.append(_save(
+                    _truncation_label("Box Plots", n_show, len(numeric_columns)),
+                    "box_plots.png",
+                ))
 
-            # 4. Bar charts for categorical columns
-            if len(categorical_columns) > 0:
-                n_cat_plots = min(2, len(categorical_columns))
-                fig, ax_array = plt.subplots(1, n_cat_plots, figsize=(15, 6), squeeze=False)
-                axes = ax_array.flatten()
-                for i, col in enumerate(categorical_columns[:n_cat_plots]):
-                    if df[col].nunique() <= 20:
-                        value_counts = df[col].value_counts().head(10)
-                        value_counts.plot(kind='bar', ax=axes[i])
-                        axes[i].set_title(f'Top Values in {col}')
-                        axes[i].set_xlabel(col)
-                        axes[i].set_ylabel('Count')
-                        axes[i].tick_params(axis='x', rotation=45)
+            # 4. Bar charts for categorical columns.
+            #    - Cap at 2 columns (the old code already did this).
+            #    - Skip columns with >20 unique values (bar chart would
+            #      be unreadable). The old code left the matching axes
+            #      empty in that case, which looked broken.
+            renderable_cats = [
+                c for c in categorical_columns
+                if df[c].nunique(dropna=True) <= 20
+            ][:2]
+            if renderable_cats:
+                fig, ax_array = plt.subplots(
+                    1, len(renderable_cats), figsize=(7 * len(renderable_cats), 6),
+                    squeeze=False,
+                )
+                for i, col in enumerate(renderable_cats):
+                    value_counts = df[col].value_counts().head(10)
+                    value_counts.plot(kind='bar', ax=ax_array[0, i])
+                    ax_array[0, i].set_title(f'Top Values in {col}')
+                    ax_array[0, i].set_xlabel(col)
+                    ax_array[0, i].set_ylabel('Count')
+                    ax_array[0, i].tick_params(axis='x', rotation=45)
                 plt.tight_layout()
-                visualizations.append(_save("Categorical Bars", "categorical_bars.png"))
+                visualizations.append(_save(
+                    _truncation_label(
+                        "Categorical Bars", len(renderable_cats), len(categorical_columns),
+                    ),
+                    "categorical_bars.png",
+                ))
 
         except Exception as e:
             if os.environ.get("STREAMLIT_RUN") != "1":
