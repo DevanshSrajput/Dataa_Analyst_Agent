@@ -1,0 +1,20 @@
+# Core data stack
+numpy
+pandas
+matplotlib
+seaborn
+
+# File extraction
+PyPDF2
+python-docx
+Pillow
+pytesseract
+
+# HTTP client (replaces the `together` SDK)
+requests
+
+# Streamlit (UI)
+streamlit
+
+# Local .env loading for development
+python-dotenv

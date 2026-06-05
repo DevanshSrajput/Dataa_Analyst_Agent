@@ -1,0 +1,24 @@
+[server]
+# Streamlit Cloud listens on 8501 by default; binding headless avoids
+# the "can't open browser" warning in containerized environments.
+headless = true
+port = 8501
+
+[browser]
+# Streamlit Cloud already proxies to the user's browser; don't try
+# to gather usage stats or open a new window.
+gatherUsageStats = false
+
+[theme]
+# Default UI theme (the user can still flip light/dark inside the app).
+base = "dark"
+primaryColor = "#667eea"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#262730"
+textColor = "#fafafa"
+font = "sans serif"
+
+[client]
+# Tooltips and exception details help debugging deploy issues.
+toolbarMode = "auto"
+showErrorDetails = true
