@@ -463,21 +463,38 @@ def main() -> None:
                 try:
                     result = agent.process_document(temp_path, uploaded_file.name)
 
-                    with st.expander(
-                        f"✅ {uploaded_file.name} - Processed Successfully", expanded=True
-                    ):
-                        c1, c2 = st.columns([2, 1])
-                        with c1:
-                            st.markdown("**📝 AI Summary:**")
-                            st.write(result["summary"])
-                        with c2:
-                            st.markdown("**📄 File Info:**")
-                            st.text(f"Type: {result['file_type'].upper()}")
-                            st.text(f"Size: {len(result['content'])} chars")
-                            if result["data_frame"] is not None:
-                                df = result["data_frame"]
-                                st.text(f"Rows: {df.shape[0]}")
-                                st.text(f"Columns: {df.shape[1]}")
+                    # ISSUES.md #1 (extraction-errors): short-circuit the
+                    # render path on failure. We MUST NOT call
+                    # `result["summary"]` or hand `result["content"]` to
+                    # the LLM — the agent guarantees those are empty
+                    # on failure, but a defensive UI also won't render
+                    # them.
+                    if not result.get("success"):
+                        st.error(
+                            f"❌ Could not process {uploaded_file.name}: "
+                            f"{result.get('error') or 'unknown error'}"
+                        )
+                        # Clean up any half-stored data frame so chat /
+                        # analytics don't see a phantom key.
+                        agent.data_frames.pop(uploaded_file.name, None)
+                        agent.document_content.pop(uploaded_file.name, None)
+                    else:
+                        with st.expander(
+                            f"✅ {uploaded_file.name} - Processed Successfully",
+                            expanded=True,
+                        ):
+                            c1, c2 = st.columns([2, 1])
+                            with c1:
+                                st.markdown("**📝 AI Summary:**")
+                                st.write(result["summary"])
+                            with c2:
+                                st.markdown("**📄 File Info:**")
+                                st.text(f"Type: {result['file_type'].upper()}")
+                                st.text(f"Size: {len(result['content'])} chars")
+                                if result["data_frame"] is not None:
+                                    df = result["data_frame"]
+                                    st.text(f"Rows: {df.shape[0]}")
+                                    st.text(f"Columns: {df.shape[1]}")
 
                     if uploaded_file.name in agent.data_frames:
                         df = agent.data_frames[uploaded_file.name]
@@ -518,7 +535,11 @@ def main() -> None:
                                                 st.image(viz_path, use_container_width=True)
 
                 except Exception as e:
-                    st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
+                    # This `except` is now a safety net for unexpected
+                    # failures (e.g. filesystem errors before extraction
+                    # begins). Extraction failures are handled inside
+                    # the `if not result.get("success")` branch above.
+                    st.error(f"❌ Unexpected error processing {uploaded_file.name}: {e}")
                 finally:
                     # SECURITY (ISSUES.md #2): clean up the UUID-keyed
                     # temp file we just wrote. Resolved against

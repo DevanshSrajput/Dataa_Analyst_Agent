@@ -364,49 +364,36 @@ class DocumentAnalystAgent:
     # ---- File extraction ----------------------------------------------------
 
     def extract_text_from_pdf(self, file_path: str) -> str:
-        """Extract text from PDF file"""
-        try:
-            with open(file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
-                text = ""
-                for page in pdf_reader.pages:
-                    text += page.extract_text() + "\n"
-                return text
-        except Exception as e:
-            return f"Error reading PDF: {str(e)}"
+        """Extract text from a PDF. Raises on any read/parse failure."""
+        with open(file_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() + "\n"
+            return text
 
     def extract_text_from_docx(self, file_path: str) -> str:
-        """Extract text from DOCX file"""
-        try:
-            doc = docx.Document(file_path)
-            text = ""
-            for paragraph in doc.paragraphs:
-                text += paragraph.text + "\n"
-            return text
-        except Exception as e:
-            return f"Error reading DOCX: {str(e)}"
+        """Extract text from a DOCX. Raises on any read/parse failure."""
+        doc = docx.Document(file_path)
+        text = ""
+        for paragraph in doc.paragraphs:
+            text += paragraph.text + "\n"
+        return text
 
     def extract_text_from_image(self, file_path: str) -> str:
-        """Extract text from image using OCR"""
-        try:
-            image = Image.open(file_path)
-            text = pytesseract.image_to_string(image)
-            return text
-        except Exception as e:
-            return f"Error processing image: {str(e)}"
+        """OCR an image. Raises on any read/OCR failure."""
+        image = Image.open(file_path)
+        return pytesseract.image_to_string(image)
 
     def load_structured_data(self, file_path: str) -> pd.DataFrame:
-        """Load structured data from CSV or Excel files"""
-        try:
-            if file_path.endswith('.csv'):
-                return pd.read_csv(file_path)
-            elif file_path.endswith(('.xlsx', '.xls')):
-                return pd.read_excel(file_path)
-            else:
-                raise ValueError("Unsupported structured data format")
-        except Exception as e:
-            print(f"Error loading structured data: {str(e)}")
-            return pd.DataFrame()
+        """Load CSV / XLS / XLSX into a DataFrame. Raises on failure or
+        unsupported format. Callers (process_document) should not swallow
+        the result silently."""
+        if file_path.lower().endswith('.csv'):
+            return pd.read_csv(file_path)
+        if file_path.lower().endswith(('.xlsx', '.xls')):
+            return pd.read_excel(file_path)
+        raise ValueError(f"Unsupported structured data format: {file_path}")
 
     # ---- Document processing ------------------------------------------------
 
@@ -414,20 +401,30 @@ class DocumentAnalystAgent:
         """
         Process a document based on its type and extract relevant information.
 
+        On extraction failure, returns a result dict with `success=False`
+        and a human-readable `error` string. The content field is empty
+        in that case — the UI MUST check `success` and short-circuit
+        before rendering or sending the result to the LLM, otherwise the
+        LLM will see the error string as if it were document text (see
+        ISSUES.md #1 — this method used to do exactly that).
+
         Args:
             file_path: Path to the file
             file_name: Name of the file
 
         Returns:
-            Dictionary containing processed information
+            Dictionary with `success: bool`, `error: str | None`, and
+            on success: `content`, `data_frame`, `summary`, `file_type`.
         """
         file_extension = file_name.lower().split('.')[-1]
-        result = {
+        result: Dict[str, Any] = {
             'file_name': file_name,
             'file_type': file_extension,
+            'success': False,
+            'error': None,
             'content': '',
             'data_frame': None,
-            'summary': ''
+            'summary': '',
         }
 
         try:
@@ -445,17 +442,33 @@ class DocumentAnalystAgent:
                 self.data_frames[file_name] = df
             elif file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']:
                 result['content'] = self.extract_text_from_image(file_path)
+            else:
+                # Unknown extension — do NOT silently return an empty
+                # result that the UI will treat as success.
+                result['error'] = (
+                    f"Unsupported file type: {file_extension!r}. "
+                    f"Supported: pdf, docx, txt, csv, xlsx, xls, jpg, "
+                    f"jpeg, png, tiff, bmp."
+                )
+                return result
 
-            # Store processed content
+            # Extraction succeeded — store and summarise.
+            result['success'] = True
             self.document_content[file_name] = result
-
-            # Generate initial summary
             result['summary'] = self.generate_document_summary(result)
-
             return result
 
+        except FileNotFoundError as e:
+            result['error'] = f"File not found: {e}"
+            return result
         except Exception as e:
-            result['content'] = f"Error processing file: {str(e)}"
+            # Catch-all so the UI gets a clean signal, but log the full
+            # traceback for the developer. (ISSUES.md #1: do not put the
+            # error string in `content` — it ends up in the LLM context.)
+            import traceback
+            if os.environ.get("STREAMLIT_RUN") != "1":
+                traceback.print_exc()
+            result['error'] = f"{type(e).__name__}: {e}"
             return result
 
     # ---- Analysis -----------------------------------------------------------
