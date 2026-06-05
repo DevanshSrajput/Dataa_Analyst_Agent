@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -279,6 +280,102 @@ class AnswerQuestionRetrievalTests(unittest.TestCase):
             agent.answer_question("Anything?")
         # generate_document_summary + answer_question = 2 calls total.
         self.assertEqual(stub.call_count, 2)
+
+
+# ---------------------------------------------------------------------------
+# Persistence (ISSUES.md #1 — in-memory state)
+# ---------------------------------------------------------------------------
+
+class PersistenceTests(unittest.TestCase):
+    """Simulate a Streamlit container recycle: agent1 writes, agent2
+    reads from the same DB. No network calls."""
+
+    def setUp(self):
+        import csv
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory(prefix="dspersist-")
+        self.db = os.path.join(self.tmp.name, "state.db")
+        self.csv_path = os.path.join(self.tmp.name, "people.csv")
+        with open(self.csv_path, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["name", "age", "score"])
+            w.writerow(["Alice", 30, 88])
+            w.writerow(["Bob", 25, 92])
+        # Agents created in tests; closed in tearDown so the DB file
+        # can be removed on Windows.
+        self.agents: list = []
+
+    def tearDown(self):
+        for a in self.agents:
+            try:
+                a.close()
+            except Exception:
+                pass
+        self.tmp.cleanup()
+
+    def _new_agent(self) -> "Agent.DocumentAnalystAgent":
+        a = Agent.DocumentAnalystAgent(api_key="k", model="m", db_path=self.db)
+        self.agents.append(a)
+        return a
+
+    def test_state_survives_container_recycle(self):
+        a1 = self._new_agent()
+        with mock.patch.object(a1, "_make_api_call_with_retry",
+                               return_value="[stub]"):
+            r = a1.process_document(self.csv_path, "people.csv")
+            self.assertTrue(r["success"])
+            a1.perform_data_analysis(a1.data_frames["people.csv"], "people.csv")
+            a1.create_visualizations(a1.data_frames["people.csv"], "people.csv")
+            a1.answer_question("who scored highest?")
+
+        # New agent on the same DB — should hydrate everything.
+        a2 = self._new_agent()
+        self.assertIn("people.csv", a2.document_content)
+        self.assertIn("people.csv", a2.data_frames)
+        self.assertEqual(a2.data_frames["people.csv"].shape, (2, 3))
+        self.assertIn("people.csv", a2.analysis_results)
+        self.assertIn("people.csv", a2.visualizations)
+        self.assertEqual(len(a2.visualizations["people.csv"]), 4)
+        self.assertEqual(len(a2.conversation_history), 1)
+        self.assertEqual(a2.conversation_history[0]["question"],
+                         "who scored highest?")
+
+    def test_failed_extraction_does_not_persist(self):
+        a1 = self._new_agent()
+        # Write a real CSV but give it an unsupported extension.
+        bad_path = os.path.join(self.tmp.name, "fake.zip")
+        with open(bad_path, "wb") as f:
+            f.write(b"not a real archive")
+        r = a1.process_document(bad_path, "fake.zip")
+        self.assertFalse(r["success"])
+        # Recycle: a new agent on the same DB must NOT see the failed file.
+        a2 = self._new_agent()
+        self.assertNotIn("fake.zip", a2.document_content)
+
+    def test_clear_caches_wipes_persistent_store(self):
+        a1 = self._new_agent()
+        with mock.patch.object(a1, "_make_api_call_with_retry",
+                               return_value="[stub]"):
+            a1.process_document(self.csv_path, "people.csv")
+        self.assertIn("people.csv", a1.document_content)
+        a1.clear_caches()
+        # New agent on the same DB should see nothing.
+        a2 = self._new_agent()
+        self.assertEqual(a2.document_content, {})
+        self.assertEqual(a2.data_frames, {})
+        self.assertEqual(a2.conversation_history, [])
+
+    def test_db_file_is_under_tempdir_by_default(self):
+        # No db_path -> default location is tempfile.gettempdir().
+        a = Agent.DocumentAnalystAgent(api_key="k", model="m")
+        try:
+            self.assertTrue(a.db_path.startswith(tempfile.gettempdir()))
+        finally:
+            a.close()
+            try:
+                os.remove(a.db_path)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------

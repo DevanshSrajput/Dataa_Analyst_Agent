@@ -89,14 +89,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 ## 🟡 Reliability / robustness
 
-### 1. In-memory state only — `Agent.py:188-191`
-- **Issue:** uploads, conversation history, analysis results live in
-  `st.session_state` and on the agent instance. Refresh = total loss.
-  Streamlit Cloud may recycle the container at any time.
-- **Fix:** SQLite-backed session or upload-to-S3 with a session id.
-- **Skill:** persistence, SQLite/S3.
-
-### 2. "Reset Session" deletes keys mid-render — `app.py:793-797`
+### 1. "Reset Session" deletes keys mid-render — `app.py:793-797`
 - **Where:** the loop `for key in list(st.session_state.keys()): del st.session_state[key]`
   then calls `st.rerun()`. Streamlit 1.30+ tolerates it, but earlier
   versions raise `RuntimeError: dictionary changed size during
@@ -110,7 +103,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 ## 🔵 Performance / scaling
 
-### 3. Synchronous HTTP from Streamlit — `Agent.py:144`
+### 2. Synchronous HTTP from Streamlit — `Agent.py:144`
 - **Issue:** a 1k-token completion takes 1–3 s synchronously. No
   streaming, no async. Streamlit reruns the whole script on every
   widget interaction, so the perceived latency compounds.
@@ -118,7 +111,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
   token-by-token rendering of chat responses.
 - **Skill:** async, streaming.
 
-### 4. `create_visualizations` always renders 4 charts — `Agent.py:332-415`
+### 3. `create_visualizations` always renders 4 charts — `Agent.py:332-415`
 - **Issue:** a 3-row CSV gets the full treatment including a
   correlation heatmap with a 1×1 matrix that seaborn happily renders
   and annotates. `numeric_columns` may also exceed 4 — only the first
@@ -127,7 +120,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
   when truncating columns.
 - **Skill:** matplotlib, defensive UI.
 
-### 5. `df.to_string()` is stored in agent state — `Agent.py:277`
+### 4. `df.to_string()` is stored in agent state — `Agent.py:277`
 - **Issue:** a 100k-row CSV is converted to a 10 MB+ string and stored
   in `document_content`, then truncated to 1500 chars at Q&A time. The
   truncation hides the loss, but the memory cost is paid up front.
@@ -140,14 +133,14 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 ## ⚪ Style / maintainability
 
-### 6. `app.py` mixes UI, theming, business logic, and helpers
+### 5. `app.py` mixes UI, theming, business logic, and helpers
 - The 50-line CSS block (`DARK_CSS`, `LIGHT_CSS`) could live in a
   `theme.py` or in `static/`. The `_safe_filename` helper and
   `AVAILABLE_MODELS` dict could move to `app_helpers.py`. `app.py`
   would shrink to pure UI orchestration.
 - **Skill:** refactoring, separation of concerns.
 
-### 7. Model catalogue is hard-coded and partially fictional
+### 6. Model catalogue is hard-coded and partially fictional
 - `AVAILABLE_MODELS` in `app.py:66-127` lists `mimo-v2.5-free`,
   `qwen3.6-plus-free`, `deepseek-v4-flash-free`, `nemotron-3-ultra-free`,
   `gemini-3.1-pro`, `gpt-5`, `claude-sonnet-4-6`, `minimax-m2.7` —
@@ -163,13 +156,12 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 | # | Severity | Area | One-liner |
 |---|---|---|---|
-| 1 | 🟡 | State | All state is in `st.session_state` |
-| 2 | 🟡 | Stability | `del st.session_state[key]` mid-iteration |
-| 3 | 🔵 | UX | No streaming; every rerun re-pays latency |
-| 4 | 🔵 | Noise | Charts always render, even for 3-row data |
-| 5 | 🔵 | Memory | `df.to_string()` stored in agent state |
-| 6 | ⚪ | Structure | `app.py` still mixes UI + theming + helpers |
-| 7 | ⚪ | Data | Model catalogue may include fictional entries |
+| 1 | 🟡 | Stability | `del st.session_state[key]` mid-iteration |
+| 2 | 🔵 | UX | No streaming; every rerun re-pays latency |
+| 3 | 🔵 | Noise | Charts always render, even for 3-row data |
+| 4 | 🔵 | Memory | `df.to_string()` stored in agent state |
+| 5 | ⚪ | Structure | `app.py` still mixes UI + theming + helpers |
+| 6 | ⚪ | Data | Model catalogue may include fictional entries |
 
 ---
 

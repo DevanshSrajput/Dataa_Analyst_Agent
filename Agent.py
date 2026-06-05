@@ -29,6 +29,7 @@ import shutil
 import tempfile
 import socket
 import ipaddress
+import io
 from typing import Dict, List, Any, Optional, Tuple
 warnings.filterwarnings('ignore')
 
@@ -462,6 +463,254 @@ def _extension_of(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Persistence (ISSUES.md #1 — in-memory state)
+# ---------------------------------------------------------------------------
+# A small SQLite-backed store for the agent's per-session state. The
+# goal is "Streamlit container recycle doesn't lose my work" — not
+# a multi-user database. One DB file per agent, UUID-keyed under
+# tempfile.gettempdir() so it survives Cloud redeploys and doesn't
+# pollute the repo.
+#
+# What's stored:
+#   - documents:    per-file extraction metadata + summary
+#   - data_frames:  pandas DataFrames, serialised as parquet blobs
+#   - analyses:     JSON-serialisable analysis results
+#   - conversations: chat Q&A history
+#   - chunks:       BM25 chunk cache (one row per chunk, in order)
+#   - viz_bytes:    (label, png_bytes) pairs, one row per chart
+#
+# Writes are synchronous and small (kilobytes per file) so we don't
+# bother with WAL mode or batching. The DB is deleted by
+# `clear_caches()`; otherwise it lives until the OS temp dir is
+# cleaned.
+
+import sqlite3
+import json as _json
+
+
+class _StateStore:
+    """Tiny SQLite wrapper. One file, six tables, no migrations."""
+
+    SCHEMA = """
+    CREATE TABLE IF NOT EXISTS documents (
+        file_name TEXT PRIMARY KEY,
+        file_type TEXT,
+        success   INTEGER,
+        error     TEXT,
+        content   TEXT,
+        summary   TEXT
+    );
+    CREATE TABLE IF NOT EXISTS data_frames (
+        file_name TEXT PRIMARY KEY,
+        parquet   BLOB
+    );
+    CREATE TABLE IF NOT EXISTS analyses (
+        file_name TEXT PRIMARY KEY,
+        data      TEXT
+    );
+    CREATE TABLE IF NOT EXISTS conversations (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        question  TEXT,
+        answer    TEXT,
+        context_files TEXT
+    );
+    CREATE TABLE IF NOT EXISTS chunks (
+        file_name TEXT,
+        idx       INTEGER,
+        text      TEXT,
+        PRIMARY KEY (file_name, idx)
+    );
+    CREATE TABLE IF NOT EXISTS viz_bytes (
+        file_name TEXT,
+        idx       INTEGER,
+        label     TEXT,
+        png       BLOB,
+        PRIMARY KEY (file_name, idx)
+    );
+    """
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn.executescript(self.SCHEMA)
+        self._conn.commit()
+
+    def close(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
+    # -- documents ---------------------------------------------------------
+
+    def upsert_document(self, file_name: str, file_type: str,
+                        success: bool, error: Optional[str],
+                        content: str, summary: str) -> None:
+        self._conn.execute(
+            "INSERT INTO documents (file_name, file_type, success, error, content, summary)"
+            " VALUES (?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(file_name) DO UPDATE SET"
+            "   file_type=excluded.file_type, success=excluded.success,"
+            "   error=excluded.error, content=excluded.content,"
+            "   summary=excluded.summary",
+            (file_name, file_type, int(success), error, content, summary),
+        )
+        self._conn.commit()
+
+    def delete_document(self, file_name: str) -> None:
+        # Cascading delete keeps dependent rows consistent.
+        self._conn.execute("DELETE FROM documents WHERE file_name=?", (file_name,))
+        self._conn.execute("DELETE FROM data_frames WHERE file_name=?", (file_name,))
+        self._conn.execute("DELETE FROM analyses WHERE file_name=?", (file_name,))
+        self._conn.execute("DELETE FROM chunks WHERE file_name=?", (file_name,))
+        self._conn.execute("DELETE FROM viz_bytes WHERE file_name=?", (file_name,))
+        self._conn.commit()
+
+    def load_documents(self) -> Dict[str, Dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT file_name, file_type, success, error, content, summary"
+            " FROM documents"
+        ).fetchall()
+        return {
+            r[0]: {
+                "file_name": r[0],
+                "file_type": r[1],
+                "success": bool(r[2]),
+                "error": r[3],
+                "content": r[4] or "",
+                "summary": r[5] or "",
+                "data_frame": None,  # loaded separately by load_data_frames
+            }
+            for r in rows
+        }
+
+    # -- data_frames -------------------------------------------------------
+
+    def upsert_dataframe(self, file_name: str, df: "pd.DataFrame") -> None:
+        buf = df.to_parquet()
+        self._conn.execute(
+            "INSERT INTO data_frames (file_name, parquet) VALUES (?, ?)"
+            " ON CONFLICT(file_name) DO UPDATE SET parquet=excluded.parquet",
+            (file_name, buf),
+        )
+        self._conn.commit()
+
+    def load_dataframes(self) -> Dict[str, "pd.DataFrame"]:
+        rows = self._conn.execute(
+            "SELECT file_name, parquet FROM data_frames"
+        ).fetchall()
+        out: Dict[str, Any] = {}
+        for name, blob in rows:
+            if not blob:
+                continue
+            try:
+                out[name] = pd.read_parquet(io.BytesIO(blob))
+            except Exception:
+                # Corrupt row — skip rather than crash the whole load.
+                continue
+        return out
+
+    # -- analyses ----------------------------------------------------------
+
+    def upsert_analysis(self, file_name: str, analysis: Dict[str, Any]) -> None:
+        # basic_info['shape'] is a tuple — JSON can serialize it, but
+        # tuples come back as lists. That's fine for the UI.
+        self._conn.execute(
+            "INSERT INTO analyses (file_name, data) VALUES (?, ?)"
+            " ON CONFLICT(file_name) DO UPDATE SET data=excluded.data",
+            (file_name, _json.dumps(analysis, default=str)),
+        )
+        self._conn.commit()
+
+    def load_analyses(self) -> Dict[str, Dict[str, Any]]:
+        rows = self._conn.execute("SELECT file_name, data FROM analyses").fetchall()
+        out: Dict[str, Any] = {}
+        for name, data in rows:
+            try:
+                out[name] = _json.loads(data)
+            except Exception:
+                continue
+        return out
+
+    # -- conversations -----------------------------------------------------
+
+    def append_conversation(self, question: str, answer: str,
+                            context_files: Optional[List[str]]) -> None:
+        self._conn.execute(
+            "INSERT INTO conversations (question, answer, context_files)"
+            " VALUES (?, ?, ?)",
+            (question, answer, _json.dumps(context_files or [])),
+        )
+        self._conn.commit()
+
+    def load_conversations(self) -> List[Dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT question, answer, context_files FROM conversations"
+            " ORDER BY id ASC"
+        ).fetchall()
+        out: List[Dict[str, Any]] = []
+        for q, a, ctx in rows:
+            try:
+                ctx_list = _json.loads(ctx) if ctx else []
+            except Exception:
+                ctx_list = []
+            out.append({
+                "question": q,
+                "answer": a,
+                "context_files": ctx_list,
+            })
+        return out
+
+    # -- chunks ------------------------------------------------------------
+
+    def replace_chunks(self, file_name: str, chunks: List[str]) -> None:
+        self._conn.execute("DELETE FROM chunks WHERE file_name=?", (file_name,))
+        self._conn.executemany(
+            "INSERT INTO chunks (file_name, idx, text) VALUES (?, ?, ?)",
+            [(file_name, i, c) for i, c in enumerate(chunks)],
+        )
+        self._conn.commit()
+
+    def load_chunks(self) -> Dict[str, List[str]]:
+        rows = self._conn.execute(
+            "SELECT file_name, idx, text FROM chunks ORDER BY file_name, idx"
+        ).fetchall()
+        out: Dict[str, List[str]] = {}
+        for name, _idx, text in rows:
+            out.setdefault(name, []).append(text)
+        return out
+
+    # -- viz bytes ---------------------------------------------------------
+
+    def replace_viz(self, file_name: str,
+                    pairs: List[Tuple[str, bytes]]) -> None:
+        self._conn.execute("DELETE FROM viz_bytes WHERE file_name=?", (file_name,))
+        self._conn.executemany(
+            "INSERT INTO viz_bytes (file_name, idx, label, png) VALUES (?, ?, ?, ?)",
+            [(file_name, i, lbl, png) for i, (lbl, png) in enumerate(pairs)],
+        )
+        self._conn.commit()
+
+    def load_viz(self) -> Dict[str, List[Tuple[str, bytes]]]:
+        rows = self._conn.execute(
+            "SELECT file_name, idx, label, png FROM viz_bytes ORDER BY file_name, idx"
+        ).fetchall()
+        out: Dict[str, List[Tuple[str, bytes]]] = {}
+        for name, _idx, label, png in rows:
+            out.setdefault(name, []).append((label, png))
+        return out
+
+    # -- global ------------------------------------------------------------
+
+    def clear(self) -> None:
+        for tbl in ("documents", "data_frames", "analyses",
+                    "conversations", "chunks", "viz_bytes"):
+            self._conn.execute(f"DELETE FROM {tbl}")
+        self._conn.commit()
+
+
+# ---------------------------------------------------------------------------
 # DocumentAnalystAgent
 # ---------------------------------------------------------------------------
 
@@ -474,7 +723,8 @@ class DocumentAnalystAgent:
     call its methods. The Streamlit UI lives in app.py.
     """
 
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL):
+    def __init__(self, api_key: str, model: str = DEFAULT_MODEL,
+                 db_path: Optional[str] = None):
 
         if not api_key:
             raise ValueError(
@@ -483,10 +733,28 @@ class DocumentAnalystAgent:
             )
         self.api_key = api_key
         self.model = model
-        self.document_content: Dict[str, Dict[str, Any]] = {}
-        self.data_frames: Dict[str, pd.DataFrame] = {}
-        self.analysis_results: Dict[str, Dict[str, Any]] = {}
-        self.conversation_history: List[Dict[str, Any]] = []
+
+        # ISSUES.md #1: persist state to SQLite so a Streamlit container
+        # recycle doesn't lose the user's work. The DB lives under
+        # tempfile.gettempdir()/dataa_analyst_state_<uuid>.db unless an
+        # explicit `db_path` is passed (useful for tests).
+        if db_path is None:
+            db_path = os.path.join(
+                tempfile.gettempdir(),
+                f"dataa_analyst_state_{uuid.uuid4().hex}.db",
+            )
+        self.db_path: str = db_path
+        self._store = _StateStore(db_path)
+
+        # In-memory caches, hydrated from the store on init so a fresh
+        # container can pick up where the previous one left off. They
+        # stay in sync via write-through in each method.
+        self.document_content: Dict[str, Dict[str, Any]] = self._store.load_documents()
+        self.data_frames: Dict[str, pd.DataFrame] = self._store.load_dataframes()
+        self.analysis_results: Dict[str, Dict[str, Any]] = self._store.load_analyses()
+        self.conversation_history: List[Dict[str, Any]] = self._store.load_conversations()
+        self._chunks: Dict[str, List[str]] = self._store.load_chunks()
+        self.visualizations: Dict[str, List[Tuple[str, bytes]]] = self._store.load_viz()
 
         # Per-agent viz dir. UUID-keyed under the system temp dir so
         # (a) it can't collide with anything in the app CWD, and
@@ -496,21 +764,50 @@ class DocumentAnalystAgent:
             tempfile.gettempdir(),
             f"dataa_analyst_viz_{uuid.uuid4().hex}",
         )
-        # Per-file viz cache: file_name -> list of (label, png_bytes).
-        # Populated by `create_visualizations`; consumed by the UI on
-        # subsequent reruns (analytics tab doesn't re-render the charts
-        # every time, it just re-displays the cached bytes).
-        self.visualizations: Dict[str, List[Tuple[str, bytes]]] = {}
-
-        # Per-file chunk cache: file_name -> list of pre-chunked text.
-        # Populated at `process_document` time so `answer_question` can
-        # score and pick top-k chunks per question without re-splitting
-        # the document on every chat turn. Cleared by `clear_caches`.
-        self._chunks: Dict[str, List[str]] = {}
+        # If we already have viz PNGs in the store, re-materialise them
+        # to the new viz dir so the UI can find them by filename. Cheap;
+        # one write per chart.
+        for file_name, pairs in self.visualizations.items():
+            for idx, (label, png) in enumerate(pairs):
+                fname = {
+                    "Distributions": "distributions.png",
+                    "Correlation Heatmap": "correlation_heatmap.png",
+                    "Box Plots": "box_plots.png",
+                    "Categorical Bars": "categorical_bars.png",
+                }.get(label, f"chart_{idx}.png")
+                path = os.path.join(self._viz_dir, fname)
+                if not os.path.exists(path):
+                    try:
+                        with open(path, "wb") as f:
+                            f.write(png)
+                    except OSError:
+                        pass
 
         # Set up plotting style
         plt.style.use('default')
         sns.set_palette("husl")
+
+    # ---- Lifecycle ---------------------------------------------------------
+
+    def close(self) -> None:
+        """Close the persistent SQLite store.
+
+        On Windows, the DB file can't be deleted while the connection
+        is open. Tests (and any other consumer that wants to remove
+        the DB file) must call `close()` before the temp dir is
+        cleaned up. After close() the agent is read-only — writes
+        will raise. The Streamlit app doesn't need to call this on
+        shutdown; the OS reaps the process and the file.
+        """
+        if self._store is not None:
+            self._store.close()
+            self._store = None
+
+    def __enter__(self) -> "DocumentAnalystAgent":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
 
     # ---- File extraction ----------------------------------------------------
 
@@ -603,6 +900,9 @@ class DocumentAnalystAgent:
                 result['data_frame'] = df
                 result['content'] = df.to_string()
                 self.data_frames[file_name] = df
+                # Persist DataFrame as parquet so a recycled container
+                # can reload it without re-parsing the file.
+                self._store.upsert_dataframe(file_name, df)
             elif file_extension in ('jpg', 'jpeg', 'png', 'tiff', 'bmp'):
                 result['content'] = self.extract_text_from_image(file_path)
             else:
@@ -621,13 +921,26 @@ class DocumentAnalystAgent:
             # [:1500] / [:4000] truncation. Skip for structured data
             # (DataFrames are summarized via analysis_results instead).
             if file_extension not in ('csv', 'xlsx', 'xls'):
-                self._chunks[file_name] = chunk_text(result['content'])
+                chunks = chunk_text(result['content'])
+                self._chunks[file_name] = chunks
+                self._store.replace_chunks(file_name, chunks)
             result['summary'] = self.generate_document_summary(result)
+            # Write through to the store BEFORE the summary is set in
+            # the result, so the row in the DB has the final summary.
+            self._store.upsert_document(
+                file_name=file_name,
+                file_type=file_extension,
+                success=result["success"],
+                error=result.get("error"),
+                content=result["content"] or "",
+                summary=result["summary"] or "",
+            )
             return result
 
         except FileNotFoundError as e:
             result['error'] = f"File not found: {e}"
             self._chunks.pop(file_name, None)
+            self._store.delete_document(file_name)
             return result
         except Exception as e:
             # Catch-all so the UI gets a clean signal, but log the full
@@ -638,6 +951,7 @@ class DocumentAnalystAgent:
                 traceback.print_exc()
             result['error'] = f"{type(e).__name__}: {e}"
             self._chunks.pop(file_name, None)
+            self._store.delete_document(file_name)
             return result
 
     # ---- Analysis -----------------------------------------------------------
@@ -675,6 +989,7 @@ class DocumentAnalystAgent:
 
         # Store analysis results
         self.analysis_results[file_name] = analysis
+        self._store.upsert_analysis(file_name, analysis)
 
         return analysis
 
@@ -773,6 +1088,7 @@ class DocumentAnalystAgent:
 
         # Cache for later re-display (analytics tab reads this).
         self.visualizations[file_name] = visualizations
+        self._store.replace_viz(file_name, visualizations)
         return visualizations
 
     def clear_visualizations(self) -> None:
@@ -788,22 +1104,14 @@ class DocumentAnalystAgent:
         self.visualizations.clear()
 
     def clear_caches(self) -> None:
-        """Wipe all per-file derived state (chunks + viz bytes).
-
-        Wired to the "Clear All Files" button in app.py so memory
-        doesn't leak across resets. Idempotent.
+        """Wipe all per-file derived state (chunks + viz bytes) AND
+        the persistent SQLite store. Wired to the "Clear All Files"
+        button in app.py so memory and disk don't leak across resets.
+        Idempotent.
         """
         self._chunks.clear()
         self.visualizations.clear()
-
-    def clear_caches(self) -> None:
-        """Wipe all per-file derived state (chunks + viz bytes).
-
-        Wired to the "Clear All Files" button in app.py so memory
-        doesn't leak across resets. Idempotent.
-        """
-        self._chunks.clear()
-        self.visualizations.clear()
+        self._store.clear()
 
     # ---- LLM interactions ---------------------------------------------------
 
@@ -947,6 +1255,7 @@ class DocumentAnalystAgent:
                 'answer': answer,
                 'context_files': context_files
             })
+            self._store.append_conversation(question, answer, context_files)
 
             return answer
 

@@ -22,6 +22,7 @@
 - [🧪 Running the Tests](#-running-the-tests)
 - [🗂️ Project Structure](#-project-structure)
 - [🔑 API Key (OpenCode Zen)](#-api-key-opencode-zen)
+- [💾 Session Persistence](#-session-persistence)
   - [Local Development](#local-development)
   - [Streamlit Cloud Deployment](#streamlit-cloud-deployment)
   - [Available AI Models](#available-ai-models)
@@ -214,7 +215,7 @@ If `streamlit` is on your `PATH` you can also do `python -m streamlit run app.py
 
 ## 🧪 Running the Tests
 
-The repo ships with a 28-test suite under `tests/` that covers extraction
+The repo ships with a 32-test suite under `tests/` that covers extraction
 failures, BM25 retrieval, the SSRF policy, the path-traversal-safe
 filename helper, and the extension allowlist. Run it with either:
 
@@ -246,7 +247,7 @@ pip install pytest
 Dataa_Analyst_Agent/
 ├── app.py              # Streamlit UI — the entrypoint for `streamlit run`
 ├── Agent.py            # Engine: extractors, BM25 retriever, OpenCode Zen client
-├── ISSUES.md           # Open audit findings (7 items open as of v3.1)
+├── ISSUES.md           # Open audit findings (6 items open as of v3.1)
 ├── Readme.md           # You are here
 ├── requirements.txt    # Python runtime deps
 ├── packages.txt        # System deps (tesseract for OCR on Streamlit Cloud)
@@ -256,9 +257,17 @@ Dataa_Analyst_Agent/
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py     # Shared fixtures (works under pytest OR unittest)
-│   └── test_agent.py   # 28 tests covering extraction, retrieval, SSRF
+│   └── test_agent.py   # 32 tests covering extraction, retrieval, SSRF, persistence
 └── venv/               # Local virtualenv (not committed)
 ```
+
+**At runtime, not in the repo:**
+
+- `tempfile.gettempdir()/dataa_analyst_state_<uuid>.db` — per-agent
+  SQLite store for session persistence. See [Session
+  Persistence](#-session-persistence) above.
+- `tempfile.gettempdir()/dataa_analyst_viz_<uuid>/` — per-agent
+  directory holding chart PNGs.
 
 [⬆ Back to top](#top)
 
@@ -318,6 +327,33 @@ these from the in-app **Settings** tab:
 The full live catalog is at `https://opencode.ai/zen/v1/models`.
 
 </details>
+
+---
+
+## 💾 Session Persistence
+
+Uploads, conversation history, analysis results, BM25 chunk caches,
+and chart bytes are persisted to a **SQLite database** under
+`tempfile.gettempdir()`. The DB survives Streamlit container
+recycles on Cloud but doesn't pollute the repo, and the agent
+hydrates from it on init so a fresh container picks up exactly
+where the previous one left off.
+
+- **DB path:** `tempfile.gettempdir()/dataa_analyst_state_<uuid>.db`
+  — one file per agent instance, UUID-keyed.
+- **What's stored:** documents (content + summary), DataFrames
+  (parquet blobs), analyses (JSON), conversation history (Q&A),
+  BM25 chunk cache, and `(label, png_bytes)` viz pairs.
+- **Cleared by:** the in-app **"Clear All Files"** button (which
+  calls `agent.clear_caches()`, including the store) and the
+  **"Reset Session"** button on the Settings tab.
+- **No new dependencies** — `sqlite3` is in the Python stdlib.
+
+If you want a clean slate, hit **"Reset Session"** in the Settings
+tab; on the next render the agent will be re-instantiated and a
+new DB will be created.
+
+[⬆ Back to top](#top)
 
 ---
 
@@ -485,7 +521,7 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 <details>
 <summary><h3 style="display:inline">Test coverage</h3></summary>
 
-- **28 tests** in `tests/test_agent.py` (zero new dependencies; runs
+- **32 tests** in `tests/test_agent.py` (zero new dependencies; runs
   under stdlib `unittest` or `pytest`).
 - Coverage: extension detection + allowlist, `_safe_filename` for
   path-traversal safety, `process_document` happy + failure paths,
@@ -502,7 +538,7 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 - `app.py` — Streamlit UI (the entrypoint for `streamlit run`).
 - `Agent.py` — engine: extractors, BM25 retriever, OpenCode Zen
   client, `safe_fetch_url` SSRF chokepoint.
-- `tests/` — 28 tests + shared fixtures (`conftest.py`).
+- `tests/` — 32 tests + shared fixtures (`conftest.py`).
 - `pyproject.toml` — `[tool.pytest.ini_options]` for the test suite.
 - `ISSUES.md` — personal-tracked audit; updated as each fix lands.
 - `.streamlit/config.toml` — Cloud-friendly defaults (port 8501, headless).
@@ -519,7 +555,10 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 5. **Blind [:4000] truncation** → BM25 retrieval over pre-chunked text
 6. **`visualizations_*` dirs in CWD** → in-memory bytes + `tempfile.gettempdir()`
 7. **Hardcoded extension list** → `Agent._SUPPORTED_EXTENSIONS` (single source of truth)
-8. **No tests** → 28-test suite under `tests/`
+8. **No tests** → 32-test suite under `tests/`
+9. **In-memory state lost on container recycle** → SQLite store under
+   `tempfile.gettempdir()`, hydrated on init, write-through on every
+   mutation. No new deps.
 
 </details>
 
