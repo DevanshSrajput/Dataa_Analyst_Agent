@@ -4,7 +4,7 @@ Findings from a fresh read of the current `Agent.py` and `app.py`. The
 original audit (35 items, kept in git history) has been reduced to the
 issues that are still open. Resolved items have been removed.
 
-Open at last edit: 2 items (0 🔴, 0 🟠, 0 🟡, 0 🔵, 2 ⚪).
+Open at last edit: 0 items (audit complete).
 
 > **Legend**
 > 🔴 Security · 🟠 Correctness / data loss · 🟡 Reliability / robustness · 🔵 Performance / scaling · ⚪ Style / maintainability
@@ -111,31 +111,18 @@ this cycle. See the new `DataFramePreviewStorageTests` in
 
 ## ⚪ Style / maintainability
 
-### 1. `app.py` mixes UI, theming, business logic, and helpers
-- The 50-line CSS block (`DARK_CSS`, `LIGHT_CSS`) could live in a
-  `theme.py` or in `static/`. The `_safe_filename` helper and
-  `AVAILABLE_MODELS` dict could move to `app_helpers.py`. `app.py`
-  would shrink to pure UI orchestration.
-- **Skill:** refactoring, separation of concerns.
-
-### 2. Model catalogue is hard-coded and partially fictional
-- `AVAILABLE_MODELS` in `app.py:66-127` lists `mimo-v2.5-free`,
-  `qwen3.6-plus-free`, `deepseek-v4-flash-free`, `nemotron-3-ultra-free`,
-  `gemini-3.1-pro`, `gpt-5`, `claude-sonnet-4-6`, `minimax-m2.7` —
-  check these against OpenCode Zen's actual catalogue and remove the
-  ones that 404.
-- **Fix:** either replace with a live fetch from a Zen models endpoint,
-  or trim the dict to a verified subset.
-- **Skill:** API integration, data hygiene.
+*(none open — both items were fixed in this cycle. Theme CSS now
+lives in `theme.py`; `_safe_filename` and a curated
+`AVAILABLE_MODELS` live in `app_helpers.py`. `app.py` is now pure
+UI orchestration. See the new `ThemeModuleTests`,
+`AppHelpersModuleTests`, `AppReexportsTests`, and
+`AppStructureTests` in `tests/test_agent.py` for the locks.)*
 
 ---
 
 ## Summary table
 
-| # | Severity | Area | One-liner |
-|---|---|---|---|
-| 1 | ⚪ | Structure | `app.py` still mixes UI + theming + helpers |
-| 2 | ⚪ | Data | Model catalogue may include fictional entries |
+*(no open issues — audit complete)*
 
 ---
 

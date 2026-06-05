@@ -13,42 +13,10 @@ Deployment notes (Streamlit Cloud):
 '''
 
 import os
-import re
 import sys
-import time
-import uuid
 
 # Mark this process as a Streamlit run so Agent.py stays quiet.
 os.environ["STREAMLIT_RUN"] = "1"
-
-# ---------------------------------------------------------------------------
-# Upload path safety (ISSUES.md #2)
-# ---------------------------------------------------------------------------
-# The original Agent.py used `temp_<uploaded_file.name>` as a relative path,
-# which is a path-traversal sink on Streamlit Cloud (CWD is the repo root).
-# `werkzeug.utils.secure_filename` is the canonical fix, but werkzeug is not
-# in our dependency tree, so we replicate its behavior with a strict
-# allowlist + basename. The on-disk path is also keyed on a UUID and lives
-# in a dedicated directory, so the user's filename never appears in the
-# filesystem path at all.
-_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
-_TEMP_UPLOAD_DIR = "temp_uploads"
-
-
-def _safe_filename(name: str) -> str:
-    """Return a filesystem-safe basename derived from `name`.
-
-    Strips directory components, replaces any non `[A-Za-z0-9._-]` run with
-    a single underscore, and falls back to a UUID if the result is empty.
-    This mirrors werkzeug's `secure_filename` semantics without adding a
-    dependency.
-    """
-    # 1. Drop any path components (handles `..`, `/`, `\\`).
-    base = os.path.basename(name)
-    # 2. Replace every unsafe run with a single underscore.
-    cleaned = _SAFE_FILENAME_RE.sub("_", base).strip("._-")
-    # 3. Empty result (e.g. name was all metacharacters) -> random fallback.
-    return cleaned or uuid.uuid4().hex
 
 import streamlit as st
 
@@ -56,165 +24,21 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from Agent import DocumentAnalystAgent, _get_api_key, DEFAULT_MODEL  # noqa: E402
 
-
-# ---------------------------------------------------------------------------
-# Model catalogue (sourced live from OpenCode Zen)
-# ---------------------------------------------------------------------------
-# Keep this small and curated - the model picker is a UI element, not a
-# reference doc. The "free" tier is surfaced first so users on a budget land
-# on something that won't burn credits.
-AVAILABLE_MODELS = {
-    "minimax-m3-free": {
-        "name": "minimax-m3-free (default)",
-        "description": "Free tier MiniMax model on OpenCode Zen.",
-        "tier": "Free",
-        "performance": "⭐⭐⭐",
-    },
-    "mimo-v2.5-free": {
-        "name": "MiMo v2.5 Free",
-        "description": "Free tier MiMo, good general chat.",
-        "tier": "Free",
-        "performance": "⭐⭐⭐",
-    },
-    "qwen3.6-plus-free": {
-        "name": "Qwen 3.6 Plus Free",
-        "description": "Free tier Qwen, solid reasoning.",
-        "tier": "Free",
-        "performance": "⭐⭐⭐",
-    },
-    "deepseek-v4-flash-free": {
-        "name": "DeepSeek v4 Flash Free",
-        "description": "Free tier DeepSeek, fast responses.",
-        "tier": "Free",
-        "performance": "⭐⭐⭐",
-    },
-    "nemotron-3-ultra-free": {
-        "name": "Nemotron 3 Ultra Free",
-        "description": "Free tier Nemotron, large context.",
-        "tier": "Free",
-        "performance": "⭐⭐⭐",
-    },
-    "minimax-m2.7": {
-        "name": "minimax m2.7",
-        "description": "Latest paid MiniMax model.",
-        "tier": "Paid",
-        "performance": "⭐⭐⭐⭐",
-    },
-    "minimax-m2.5": {
-        "name": "minimax m2.5",
-        "description": "Previous-generation MiniMax.",
-        "tier": "Paid",
-        "performance": "⭐⭐⭐⭐",
-    },
-    "gpt-5": {
-        "name": "GPT-5",
-        "description": "OpenAI GPT-5 via Zen.",
-        "tier": "Paid",
-        "performance": "⭐⭐⭐⭐⭐",
-    },
-    "claude-sonnet-4-6": {
-        "name": "Claude Sonnet 4.6",
-        "description": "Anthropic Sonnet via Zen.",
-        "tier": "Paid",
-        "performance": "⭐⭐⭐⭐⭐",
-    },
-    "gemini-3.1-pro": {
-        "name": "Gemini 3.1 Pro",
-        "description": "Google Gemini Pro via Zen.",
-        "tier": "Paid",
-        "performance": "⭐⭐⭐⭐⭐",
-    },
-}
-
-
-# ---------------------------------------------------------------------------
-# Theme CSS
-# ---------------------------------------------------------------------------
-# Compact replacement for the original Agent.py CSS block. The original
-# was ~700 lines of `!important` arms-race styling; this is a focused,
-# scoped version that still hits the major elements but won't dominate
-# the file.
-
-DARK_CSS = """
-:root {
-    --bg-primary: #0e1117;
-    --bg-secondary: #262730;
-    --bg-tertiary: #3d3d3d;
-    --text-primary: #fafafa;
-    --text-secondary: #e0e0e0;
-    --accent-color: #667eea;
-    --accent-gradient: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-    --border-color: #555555;
-    --card-bg: #262730;
-    --upload-bg: #1e1e2e;
-    --tab-bg: #262730;
-    --tab-selected: #667eea;
-}
-.stApp { background-color: var(--bg-primary) !important; color: var(--text-primary) !important; }
-section[data-testid="stSidebar"] { background-color: var(--bg-secondary) !important; }
-section[data-testid="stSidebar"] * { color: var(--text-primary) !important; }
-.stTextInput > div > div > input,
-.stTextArea > div > div > textarea { background-color: var(--bg-secondary) !important; color: var(--text-primary) !important; }
-.stSelectbox > div > div { background-color: var(--bg-secondary) !important; color: var(--text-primary) !important; }
-.stSelectbox [role="option"] { background-color: var(--bg-secondary) !important; color: var(--text-primary) !important; }
-.stSelectbox [role="option"]:hover { background-color: var(--accent-color) !important; color: white !important; }
-.streamlit-expanderHeader, .streamlit-expanderContent { background-color: var(--bg-secondary) !important; color: var(--text-primary) !important; }
-.stMetric, [data-testid="metric-container"] { background-color: var(--card-bg) !important; color: var(--text-primary) !important; }
-.stTabs [data-baseweb="tab"] { background-color: var(--tab-bg) !important; color: var(--text-primary) !important; }
-.stTabs [aria-selected="true"] { background-color: var(--tab-selected) !important; color: white !important; }
-.stButton > button { background-color: var(--bg-secondary) !important; color: var(--text-primary) !important; border-color: var(--border-color) !important; }
-.stButton > button:hover { background-color: var(--accent-color) !important; color: white !important; border-color: var(--accent-color) !important; }
-.stFileUploader, .stDataFrame { background-color: var(--bg-secondary) !important; color: var(--text-primary) !important; }
-.stProgress > div > div > div > div { background-color: var(--accent-color) !important; }
-.stSlider label, .stTextInput label, .stTextArea label, .stSelectbox label, .stFileUploader label { color: var(--text-primary) !important; }
-h1, h2, h3, h4, h5, h6, p, div, span, label, li, strong, em, a { color: var(--text-primary) !important; }
-.stMarkdown, .stMarkdown * { color: var(--text-primary) !important; }
-.main-header { background: var(--accent-gradient); padding: 2rem; border-radius: 10px; color: white; text-align: center; margin-bottom: 2rem; }
-.feature-card { background: var(--card-bg); padding: 1.5rem; border-radius: 10px; border-left: 4px solid var(--accent-color); margin: 1rem 0; color: var(--text-primary); }
-.upload-zone { border: 2px dashed var(--accent-color); border-radius: 10px; padding: 2rem; text-align: center; background: var(--upload-bg); color: var(--text-primary); margin: 1rem 0; }
-.chat-container { background: var(--card-bg); border-radius: 10px; padding: 1rem; color: var(--text-primary); }
-#MainMenu, footer, header { visibility: hidden; }
-"""
-
-LIGHT_CSS = """
-:root {
-    --bg-primary: #ffffff;
-    --bg-secondary: #f8f9fa;
-    --bg-tertiary: #e9ecef;
-    --text-primary: #212529;
-    --accent-color: #667eea;
-    --accent-gradient: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-    --border-color: #dee2e6;
-    --card-bg: #f8f9fa;
-    --upload-bg: #f8f9fa;
-    --tab-bg: #f0f2f6;
-    --tab-selected: #667eea;
-}
-.stApp { background-color: var(--bg-primary) !important; color: var(--text-primary) !important; }
-section[data-testid="stSidebar"] { background-color: var(--bg-secondary) !important; }
-section[data-testid="stSidebar"] * { color: var(--text-primary) !important; }
-.stTextInput > div > div > input,
-.stTextArea > div > div > textarea { background-color: white !important; color: var(--text-primary) !important; }
-.stSelectbox > div > div { background-color: white !important; color: var(--text-primary) !important; border: 1px solid var(--border-color) !important; }
-.stSelectbox [role="option"] { background-color: white !important; color: var(--text-primary) !important; }
-.stSelectbox [role="option"]:hover { background-color: var(--accent-color) !important; color: white !important; }
-.streamlit-expanderHeader, .streamlit-expanderContent { background-color: var(--bg-secondary) !important; color: var(--text-primary) !important; }
-.stMetric, [data-testid="metric-container"] { background-color: var(--card-bg) !important; color: var(--text-primary) !important; }
-.stTabs [data-baseweb="tab"] { background-color: var(--tab-bg) !important; color: var(--text-primary) !important; }
-.stTabs [aria-selected="true"] { background-color: var(--tab-selected) !important; color: white !important; }
-.stButton > button { background-color: white !important; color: var(--text-primary) !important; border-color: var(--border-color) !important; }
-.stButton > button:hover { background-color: var(--accent-color) !important; color: white !important; }
-.main-header { background: var(--accent-gradient); padding: 2rem; border-radius: 10px; color: white; text-align: center; margin-bottom: 2rem; }
-.feature-card { background: var(--card-bg); padding: 1.5rem; border-radius: 10px; border-left: 4px solid var(--accent-color); margin: 1rem 0; color: var(--text-primary); }
-.upload-zone { border: 2px dashed var(--accent-color); border-radius: 10px; padding: 2rem; text-align: center; background: var(--upload-bg); color: var(--text-primary); margin: 1rem 0; }
-.chat-container { background: var(--card-bg); border-radius: 10px; padding: 1rem; color: var(--text-primary); }
-#MainMenu, footer, header { visibility: hidden; }
-"""
+# Re-exports: keep the legacy `from app import _safe_filename` import
+# path working for tests and any external callers, while the source of
+# truth lives in app_helpers.py / theme.py.
+from app_helpers import _safe_filename, _TEMP_UPLOAD_DIR  # noqa: E402
+from app_helpers import AVAILABLE_MODELS, DEFAULT_MODEL_ID, list_model_choices  # noqa: E402
+from theme import css_for_theme  # noqa: E402
 
 
 def _inject_css(theme_mode: str) -> None:
-    css = DARK_CSS if theme_mode == "dark" else LIGHT_CSS
-    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    """Render the active theme's CSS into the Streamlit page.
+
+    Thin wrapper around `theme.css_for_theme` kept here so the call
+    site in `main()` doesn't have to know about the theme module.
+    """
+    st.markdown(f"<style>{css_for_theme(theme_mode)}</style>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -742,14 +566,19 @@ def main() -> None:
         # Model
         st.markdown("### 🤖 AI Model Configuration")
         st.markdown(f"**Current Model:** `{agent.model}`")
-        model_names = list(AVAILABLE_MODELS.keys())
+        # Curated list from app_helpers — free tier first, then paid.
+        # If the agent's current model is no longer in the catalogue
+        # (e.g. an id was removed), fall back to the default rather
+        # than crashing the selectbox.
+        model_choices = list_model_choices()
+        model_ids = [mid for mid, _name in model_choices]
         try:
-            current_index = model_names.index(agent.model)
+            current_index = model_ids.index(agent.model)
         except ValueError:
             current_index = 0
         selected_model = st.selectbox(
             "Select AI Model:",
-            options=model_names,
+            options=model_ids,
             format_func=lambda x: AVAILABLE_MODELS[x]["name"],
             index=current_index,
         )

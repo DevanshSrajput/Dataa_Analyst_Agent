@@ -219,7 +219,7 @@ If `streamlit` is on your `PATH` you can also do `python -m streamlit run app.py
 
 ## 🧪 Running the Tests
 
-The repo ships with a 56-test suite under `tests/` that covers extraction
+The repo ships with a 73-test suite under `tests/` that covers extraction
 failures, BM25 retrieval, the SSRF policy, the path-traversal-safe
 filename helper, and the extension allowlist. Run it with either:
 
@@ -249,9 +249,11 @@ pip install pytest
 
 ```
 Dataa_Analyst_Agent/
-├── app.py              # Streamlit UI — the entrypoint for `streamlit run`
+├── app.py              # Streamlit UI — entrypoint, pure orchestration
+├── app_helpers.py      # _safe_filename, AVAILABLE_MODELS, list_model_choices
+├── theme.py            # DARK_CSS / LIGHT_CSS + css_for_theme()
 ├── Agent.py            # Engine: extractors, BM25 retriever, OpenCode Zen client
-├── ISSUES.md           # Open audit findings (6 items open as of v3.1)
+├── ISSUES.md           # Open audit findings (audit complete as of v3.1)
 ├── Readme.md           # You are here
 ├── requirements.txt    # Python runtime deps
 ├── packages.txt        # System deps (tesseract for OCR on Streamlit Cloud)
@@ -261,7 +263,7 @@ Dataa_Analyst_Agent/
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py     # Shared fixtures (works under pytest OR unittest)
-│   └── test_agent.py   # 56 tests covering extraction, retrieval, SSRF, persistence, reset path, streaming, viz guards, DataFrame preview
+│   └── test_agent.py   # 73 tests covering extraction, retrieval, SSRF, persistence, reset path, streaming, viz guards, DataFrame preview, theme, helpers
 └── venv/               # Local virtualenv (not committed)
 ```
 
@@ -525,7 +527,7 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 <details>
 <summary><h3 style="display:inline">Test coverage</h3></summary>
 
-- **56 tests** in `tests/test_agent.py` (one new optional dep:
+- **73 tests** in `tests/test_agent.py` (one new optional dep:
   `httpx`, used lazily for streaming; runs under stdlib `unittest` or
   `pytest`).
 - Coverage: extension detection + allowlist, `_safe_filename` for
@@ -539,7 +541,11 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
   right chart types, column truncation is surfaced in the
   label), and DataFrame preview storage (large CSVs no longer
   inflate document_content or the SQLite documents row; the
-  full DataFrame hydrates from parquet).
+  full DataFrame hydrates from parquet), the new theme +
+  app_helpers modules (no `DARK_CSS` / `LIGHT_CSS` /
+  `_safe_filename` / inline `AVAILABLE_MODELS` left in
+  `app.py`), and the curated model catalogue (fictional
+  ids like `mimo-v2.5-free` are not in `AVAILABLE_MODELS`).
 - No network calls, no heavy-dep imports in the test path. Full
   suite finishes in ~100 ms.
 
@@ -551,7 +557,7 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 - `app.py` — Streamlit UI (the entrypoint for `streamlit run`).
 - `Agent.py` — engine: extractors, BM25 retriever, OpenCode Zen
   client, `safe_fetch_url` SSRF chokepoint.
-- `tests/` — 56 tests + shared fixtures (`conftest.py`).
+- `tests/` — 73 tests + shared fixtures (`conftest.py`).
 - `pyproject.toml` — `[tool.pytest.ini_options]` for the test suite.
 - `ISSUES.md` — personal-tracked audit; updated as each fix lands.
 - `.streamlit/config.toml` — Cloud-friendly defaults (port 8501, headless).
@@ -568,7 +574,7 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 5. **Blind [:4000] truncation** → BM25 retrieval over pre-chunked text
 6. **`visualizations_*` dirs in CWD** → in-memory bytes + `tempfile.gettempdir()`
 7. **Hardcoded extension list** → `Agent._SUPPORTED_EXTENSIONS` (single source of truth)
-8. **No tests** → 56-test suite under `tests/`
+8. **No tests** → 73-test suite under `tests/`
 9. **In-memory state lost on container recycle** → SQLite store under
    `tempfile.gettempdir()`, hydrated on init, write-through on every
    mutation. No new deps.
@@ -595,6 +601,14 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
     `data_frames[file_name]` (parquet blob, hydrated on
     container recycle). A 100k-row CSV's `content` is now
     bounded under 5 KB instead of >10 MB.
+14. **`app.py` mixes UI + theming + helpers; AVAILABLE_MODELS
+    includes fictional ids** → CSS moved to `theme.py`,
+    `_safe_filename` and a curated `AVAILABLE_MODELS` moved to
+    `app_helpers.py`. The catalogue was trimmed from 10
+    entries (8 of which would 404 against OpenCode Zen) to 3
+    verified ids with a `curl`-based recipe for adding more.
+    `app.py` re-exports the moved names so legacy
+    `from app import _safe_filename` keeps working.
 
 </details>
 

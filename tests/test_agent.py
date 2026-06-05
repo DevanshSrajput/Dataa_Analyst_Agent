@@ -1086,5 +1086,227 @@ class DataFramePreviewStorageTests(unittest.TestCase):
                 a1.close()
 
 
+# ---------------------------------------------------------------------------
+# ISSUES.md #1 + #2 (⚪) — split theme + helpers out of app.py and
+# verify AVAILABLE_MODELS against OpenCode Zen's catalogue.
+#
+# These tests run WITHOUT numpy, pandas, or streamlit — they import
+# the pure-Python `theme` and `app_helpers` modules directly. That
+# also doubles as a sanity check that the new modules don't pull
+# heavy-dep imports at module load.
+# ---------------------------------------------------------------------------
+
+class ThemeModuleTests(unittest.TestCase):
+    """theme.py must export DARK_CSS / LIGHT_CSS strings and a
+    `css_for_theme` selector. Both blocks must be non-empty CSS
+    and must differ (otherwise the theme switch is a no-op)."""
+
+    def setUp(self):
+        from theme import DARK_CSS, LIGHT_CSS, css_for_theme
+        self.DARK_CSS = DARK_CSS
+        self.LIGHT_CSS = LIGHT_CSS
+        self.css_for_theme = css_for_theme
+
+    def test_dark_and_light_differ(self):
+        self.assertNotEqual(
+            self.DARK_CSS, self.LIGHT_CSS,
+            "DARK_CSS and LIGHT_CSS must differ; the theme switch "
+            "would be a no-op otherwise",
+        )
+
+    def test_both_blocks_contain_root_variables(self):
+        for label, css in (("DARK_CSS", self.DARK_CSS),
+                           ("LIGHT_CSS", self.LIGHT_CSS)):
+            with self.subTest(css=label):
+                self.assertIn(":root", css)
+                self.assertIn("--bg-primary", css)
+                self.assertIn("--text-primary", css)
+
+    def test_css_for_theme_returns_correct_block(self):
+        self.assertIs(self.css_for_theme("dark"), self.DARK_CSS)
+        self.assertIs(self.css_for_theme("light"), self.LIGHT_CSS)
+
+    def test_css_for_theme_falls_back_to_dark(self):
+        """Unknown theme names should not crash; default to dark."""
+        self.assertIs(self.css_for_theme("garbage"), self.DARK_CSS)
+        self.assertIs(self.css_for_theme(""), self.DARK_CSS)
+
+
+class AppHelpersModuleTests(unittest.TestCase):
+    """app_helpers.py exports _safe_filename, AVAILABLE_MODELS,
+    DEFAULT_MODEL_ID, and list_model_choices."""
+
+    def setUp(self):
+        from app_helpers import (
+            _safe_filename, AVAILABLE_MODELS, DEFAULT_MODEL_ID,
+            list_model_choices,
+        )
+        self._safe_filename = _safe_filename
+        self.AVAILABLE_MODELS = AVAILABLE_MODELS
+        self.DEFAULT_MODEL_ID = DEFAULT_MODEL_ID
+        self.list_model_choices = list_model_choices
+
+    def test_safe_filename_matches_pre_refactor_behaviour(self):
+        # Drop path components, replace shell metachars, fall back to UUID.
+        self.assertEqual(self._safe_filename("../../etc/passwd"), "passwd")
+        self.assertEqual(
+            self._safe_filename("..\\..\\windows\\system32\\cmd.exe"),
+            "cmd.exe",
+        )
+        out = self._safe_filename("foo; rm -rf bar.pdf")
+        self.assertNotIn(" ", out)
+        self.assertNotIn(";", out)
+        out = self._safe_filename("")
+        self.assertTrue(out)
+        self.assertGreaterEqual(len(out), 16)
+        self.assertEqual(
+            self._safe_filename("normal_report.pdf"),
+            "normal_report.pdf",
+        )
+        self.assertEqual(
+            self._safe_filename("spaces in name.csv"),
+            "spaces_in_name.csv",
+        )
+
+    def test_available_models_is_curated(self):
+        """The 8-entry fictional list (mimo-v2.5-free, qwen3.6-plus-free,
+        deepseek-v4-flash-free, nemotron-3-ultra-free, gemini-3.1-pro,
+        gpt-5, claude-sonnet-4-6, minimax-m2.7) was mostly fictional.
+        The new catalogue must NOT contain those speculative ids —
+        they 404 against OpenCode Zen's live API."""
+        banned = {
+            "mimo-v2.5-free",
+            "qwen3.6-plus-free",
+            "deepseek-v4-flash-free",
+            "nemotron-3-ultra-free",
+            "gemini-3.1-pro",
+            "gpt-5",
+            "claude-sonnet-4-6",
+        }
+        for fake_id in banned:
+            with self.subTest(model=fake_id):
+                self.assertNotIn(
+                    fake_id, self.AVAILABLE_MODELS,
+                    f"{fake_id} is a speculative id and must not be "
+                    f"in the curated catalogue",
+                )
+
+    def test_available_models_is_small(self):
+        """The catalogue is a UI selector, not a reference doc. Keep
+        it small so the picker stays usable."""
+        self.assertLessEqual(
+            len(self.AVAILABLE_MODELS), 6,
+            "curated catalogue is too long; trim to a verified subset",
+        )
+        self.assertGreaterEqual(
+            len(self.AVAILABLE_MODELS), 2,
+            "need at least one free and one paid model",
+        )
+
+    def test_default_model_id_is_in_catalogue(self):
+        """The default id MUST be present in AVAILABLE_MODELS, or
+        the selectbox will crash on first render."""
+        self.assertIn(self.DEFAULT_MODEL_ID, self.AVAILABLE_MODELS)
+
+    def test_every_model_has_required_fields(self):
+        required = {"name", "description", "tier", "performance"}
+        for mid, info in self.AVAILABLE_MODELS.items():
+            with self.subTest(model=mid):
+                missing = required - set(info.keys())
+                self.assertFalse(
+                    missing,
+                    f"model {mid} is missing fields: {missing}",
+                )
+                self.assertIn(info["tier"], ("Free", "Paid"))
+
+    def test_list_model_choices_orders_free_first(self):
+        choices = self.list_model_choices()
+        self.assertGreater(len(choices), 0)
+        # The first segment must be all Free, then Paid.
+        seen_paid = False
+        for mid, _name in choices:
+            tier = self.AVAILABLE_MODELS[mid]["tier"]
+            if tier == "Paid":
+                seen_paid = True
+            elif seen_paid and tier == "Free":
+                self.fail(
+                    "list_model_choices must not interleave Free "
+                    "and Paid; all Free must come first",
+                )
+
+    def test_list_model_choices_ids_match_catalogue(self):
+        """Every id returned by the helper must be in AVAILABLE_MODELS,
+        and vice versa (no orphans)."""
+        ids = [mid for mid, _ in self.list_model_choices()]
+        self.assertEqual(set(ids), set(self.AVAILABLE_MODELS.keys()))
+
+
+@_require_agent()
+class AppReexportsTests(unittest.TestCase):
+    """The legacy `from app import _safe_filename` and the
+    `AVAILABLE_MODELS` / `DEFAULT_MODEL_ID` re-exports must keep
+    working so external callers (and the test suite) don't break."""
+
+    def setUp(self):
+        # These imports must succeed without numpy/pandas.
+        from app import _safe_filename, AVAILABLE_MODELS, DEFAULT_MODEL_ID
+        self._safe_filename = _safe_filename
+        self.AVAILABLE_MODELS = AVAILABLE_MODELS
+        self.DEFAULT_MODEL_ID = DEFAULT_MODEL_ID
+
+    def test_app_safe_filename_delegates_to_helper(self):
+        self.assertEqual(
+            self._safe_filename("../../etc/passwd"),
+            "passwd",
+        )
+        self.assertEqual(
+            self._safe_filename("spaces in name.csv"),
+            "spaces_in_name.csv",
+        )
+
+    def test_app_available_models_is_same_object_as_helpers(self):
+        # Same module-level dict — not a copy. Keeps mutations in
+        # sync if anything ever edits the catalogue at runtime.
+        from app_helpers import AVAILABLE_MODELS as helpers_dict
+        self.assertIs(self.AVAILABLE_MODELS, helpers_dict)
+
+
+class AppStructureTests(unittest.TestCase):
+    """Static checks on app.py: the heavy CSS blocks and the
+    AVAILABLE_MODELS dict must no longer live in app.py."""
+
+    def setUp(self):
+        from pathlib import Path
+        self.src = Path("app.py").read_text(encoding="utf-8")
+
+    def test_app_does_not_define_dark_css(self):
+        self.assertNotIn(
+            "DARK_CSS = ", self.src,
+            "DARK_CSS must live in theme.py, not app.py",
+        )
+        self.assertNotIn(
+            "LIGHT_CSS = ", self.src,
+            "LIGHT_CSS must live in theme.py, not app.py",
+        )
+
+    def test_app_does_not_define_available_models_inline(self):
+        # The old code had `AVAILABLE_MODELS = { ... }` as a literal
+        # dict in app.py. After the refactor it must only be imported.
+        self.assertNotIn(
+            "AVAILABLE_MODELS = {", self.src,
+            "AVAILABLE_MODELS must live in app_helpers.py, not app.py",
+        )
+
+    def test_app_does_not_define_safe_filename_inline(self):
+        self.assertNotIn(
+            "def _safe_filename(", self.src,
+            "_safe_filename must live in app_helpers.py, not app.py",
+        )
+
+    def test_app_imports_new_modules(self):
+        self.assertIn("from app_helpers import", self.src)
+        self.assertIn("from theme import", self.src)
+
+
 if __name__ == "__main__":
     unittest.main()
