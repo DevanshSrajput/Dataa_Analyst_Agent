@@ -1,28 +1,75 @@
-# 📊 AI Document Analyst v2.0
+# 📊 AI Document Analyst v3.0
 
-> _"Because reading your own documents is so 2022. Let the AI do the heavy lifting while you take all the credit. Now with 100% more dark mode!"_
+> _"Because reading your own documents is so 2022. Let the AI do the heavy lifting while you take all the credit. Now with 100% more dark mode and a backend that actually works!"_
+
+<a id="top"></a>
+
+---
+
+## 🧭 Table of Contents
+
+- [😏 What Is This Masterpiece?](#-what-is-this-masterpiece)
+- [🕰️ What Was New in v2.0 (The Glow-Up Edition)](#-what-was-new-in-v20-the-glow-up-edition)
+- [📸 Screenshots](#-screenshots)
+- [🚀 Features](#-features-because-youre-too-busy-to-read-the-code)
+  - [🏠 Home Tab](#-home-tab)
+  - [📤 Upload & Process Tab](#-upload--process-tab)
+  - [💬 AI Chat Tab](#-ai-chat-tab)
+  - [📊 Analytics Tab](#-analytics-tab)
+  - [⚙️ Settings Tab](#-settings-tab)
+- [🛠️ How to Run](#-how-to-run-because-reading-instructions-is-actually-important)
+  - [☁️ Deploy to Streamlit Cloud](#-deploy-to-streamlit-cloud-one-click)
+- [🔑 API Key (OpenCode Zen)](#-api-key-opencode-zen)
+  - [Local Development](#local-development)
+  - [Streamlit Cloud Deployment](#streamlit-cloud-deployment)
+  - [Available AI Models](#available-ai-models)
+- [🤖 How It Works](#-how-it-works-magic-but-with-science)
+- [🎯 Why Use This?](#-why-use-this-besides-my-incredible-ego)
+- [🔧 Installation Troubleshooting](#-installation-troubleshooting)
+- [📝 Credits & Thanks](#-credits--thanks)
+- [⚠️ Disclaimer](#-disclaimer)
+- [💌 Feedback & Support](#-feedback--support)
+- [🎉 Recent Changes (v3.0)](#-recent-changes-v30)
+  - [Backend Rewrite](#backend-rewrite)
+  - [Code Structure](#code-structure)
+  - [Deployment](#deployment)
+  - [Hygiene](#hygiene)
+  - [What Changed (v2.0 → v3.0)](#what-changed-v20--v30)
+  - [What Did NOT Change](#what-did-not-change)
+- [🧭 Project History](#-project-history)
+- [👤 Maintainer](#-maintainer)
 
 ---
 
 ## 😏 What Is This Masterpiece?
 
-Welcome to **AI Document Analyst v2.0** – the tool you never knew you desperately needed, now with a complete UI makeover that'll make your other apps jealous. Built by _Devansh Singh_ (yes, I made this, and yes, I'm still waiting for my Nobel Prize).
+Welcome to **AI Document Analyst v3.0** – the tool you never knew you desperately needed, now with a complete backend overhaul and a cleaner architecture. Built by _Devansh Singh_ (yes, I made this, and yes, I'm still waiting for my Nobel Prize).
 
 This Python-powered, AI-infused, theme-switching, sarcasm-enabled agent will:
 
 - **Read** your PDFs, DOCX, TXT, CSV, Excel, and even images (OCR, because why not?).
-- **Summarize** them using Meta Llama models via Together AI (because free is better than expensive).
+- **Summarize** them via **OpenCode Zen** — OpenAI-compatible chat completions, with `minimax-m3-free` as the default model.
 - **Analyze** your data with pandas wizardry (the Avengers of data science).
 - **Visualize** trends and patterns with auto-generated charts (because you love pretty colors).
 - **Chat** with your documents like they're your best friend (spoiler: they're more reliable).
 - **Switch** between light and dark themes (because your eyes deserve options).
 - **Generate Reports** that sound like you spent hours on them (you didn't).
+- **Deploy** to Streamlit Cloud with one click (yes, really).
 
 All this, wrapped in a gorgeous Streamlit UI with tabs, themes, and more bells and whistles than a marching band.
 
+[⬆ Back to top](#top)
+
 ---
 
-## 🎨 What's New in v2.0? (The Glow-Up Edition)
+## 🕰️ What Was New in v2.0 (The Glow-Up Edition)
+
+<details>
+<summary>📜 Click to expand the v2.0 changelog (historical context)</summary>
+
+A historical changelog entry — v2.0 was the previous major version
+before the 2026-06-05 reset to v3.0. Kept here for readers who arrive
+via the v2.0 screenshots below.
 
 - **🌙 Dark/Light Mode**: Toggle between themes like a pro. Your retinas will thank you.
 - **📑 Tabbed Interface**: Home, Upload, Chat, Analytics, and Settings tabs. Organization is sexy.
@@ -31,6 +78,10 @@ All this, wrapped in a gorgeous Streamlit UI with tabs, themes, and more bells a
 - **⚙️ Settings Panel**: Configure everything from AI models to themes. Power user vibes.
 - **📊 Advanced Analytics**: Beautiful charts, stats, and insights that'll make Excel cry.
 - **🎪 Better UI**: Modern gradients, cards, and animations. Instagram-worthy data analysis.
+
+</details>
+
+[⬆ Back to top](#top)
 
 ---
 
@@ -61,6 +112,8 @@ All this, wrapped in a gorgeous Streamlit UI with tabs, themes, and more bells a
 
 > The UI may differ slightly if I decided to tweak it and forgot to update screenshots. JK! (But seriously, it might.)
 
+[⬆ Back to top](#top)
+
 ---
 
 ## 🚀 Features (Because You're Too Busy to Read the Code)
@@ -84,7 +137,7 @@ All this, wrapped in a gorgeous Streamlit UI with tabs, themes, and more bells a
 - **Conversational Q&A:** Ask anything about your documents
 - **Context Awareness:** Remembers your conversation (better than most humans)
 - **Quick Questions:** Pre-built buttons for instant insights
-- **Smart Responses:** Powered by Meta Llama models via Together AI
+- **Smart Responses:** Powered by OpenCode Zen (OpenAI-compatible chat completions)
 
 ### 📊 **Analytics Tab**
 
@@ -101,6 +154,8 @@ All this, wrapped in a gorgeous Streamlit UI with tabs, themes, and more bells a
 - **Processing Settings:** Customize AI behavior
 - **Session Management:** Reset everything when you mess up
 
+[⬆ Back to top](#top)
+
 ---
 
 ## 🛠️ How to Run (Because Reading Instructions Is Actually Important)
@@ -116,49 +171,100 @@ pip install -r requirements.txt
 ### 2. **Run the App:**
 
 ```sh
-python Data_Analyst_Agent.py
+streamlit run app.py
 ```
 
-Or, if you're feeling fancy:
+> **Note:** the entrypoint is `app.py`, not `Agent.py`. `Agent.py` is
+> the engine module; `app.py` is the Streamlit UI. The old
+> `Data_Analyst_Agent.py` / `Agent.py` monolith is gone.
 
-```sh
-streamlit run Data_Analyst_Agent.py
-```
+If `streamlit` is on your `PATH` you can also do `python -m streamlit run app.py`.
 
 ### 3. **Open Your Browser:**
 
-- The app will automatically open at `http://localhost:8502`
+- The app opens at `http://localhost:8501` (Streamlit's default)
 - If it doesn't, manually navigate there (I can't click for you)
 
 ### 4. **Start Analyzing:**
 
-- The app includes a **free API key** (yes, FREE!)
-- Just upload your files and start chatting
-- No complicated setup required
+- Set your `OPENCODE_API_KEY` in `.env` (or paste it into the app's
+  **Settings** tab once it's running)
+- Upload your files and start chatting — the default model is
+  `minimax-m3-free` (no credit card burn)
+
+### ☁️ **Deploy to Streamlit Cloud (one click):**
+
+1. Push this repo to GitHub.
+2. On [share.streamlit.io](https://share.streamlit.io), click **New app**,
+   select the repo, and set the main file path to `app.py`.
+3. Open **Advanced settings → Secrets** and paste:
+   ```toml
+   OPENCODE_API_KEY = "your_key_here"
+   ```
+4. Click **Deploy**. The first build will pull `tesseract` from
+   `packages.txt` and Python deps from `requirements.txt`.
+
+> `packages.txt` in the repo root installs the system `tesseract` binary
+> on the Cloud image so image OCR works.
+
+[⬆ Back to top](#top)
 
 ---
 
-## 🔑 API Key (Now 100% Free!)
+## 🔑 API Key (OpenCode Zen)
 
-**Good news!** I've decided to be generous and provide my own Together AI API key with the app. Why? Because:
+The app talks to **[OpenCode Zen](https://opencode.ai/zen)** — a single
+endpoint that fronts multiple model providers behind an
+OpenAI-compatible chat-completions API. Sign up there, paste a credit
+card (the free tier is enough for most use), and grab an API key.
 
-- Together AI is essentially free for reasonable usage
-- You shouldn't have to jump through hoops to try this
-- I'm feeling charitable (it happens sometimes)
+**Resolution order** (the app tries these in sequence):
 
-### But If You Want Your Own Key...
+1. `st.secrets["OPENCODE_API_KEY"]` — used when deployed on Streamlit Cloud
+2. `OPENCODE_API_KEY` environment variable — used for local dev via `.env`
+3. `TOGETHER_API_KEY` environment variable — legacy fallback from v2.0
 
-1. Get it from [Together AI](https://api.together.xyz/) (they're pretty cool)
-2. Use the **Settings Tab** in the app to add your key
-3. Or set it as an environment variable: `TOGETHER_API_KEY=your_key_here`
+### Local development
 
-### Available AI Models:
+```sh
+echo "OPENCODE_API_KEY=your_key_here" > .env
+```
 
-- **Llama 3.1 8B Turbo** (Recommended - fast and efficient)
-- **Llama 3.1 70B Turbo** (Powerful - for when you need the big guns)
-- **Llama 3.2 11B Vision** (Multimodal - can see your images)
-- **Mixtral 8x7B** (Alternative - because options are good)
-- **Nous Hermes 2** (Conversational - optimized for chat)
+### Streamlit Cloud deployment
+
+In the app dashboard, go to **Settings → Secrets** and paste:
+
+```toml
+OPENCODE_API_KEY = "your_key_here"
+```
+
+Save. The app will reboot and pick the key up automatically — no
+code change needed.
+
+[⬆ Back to top](#top)
+
+### Available AI Models
+
+<details>
+<summary>🤖 Click to see all 10 supported models (default is <code>minimax-m3-free</code>)</summary>
+
+Default model is `minimax-m3-free` (free tier). You can swap to any of
+these from the in-app **Settings** tab:
+
+- `minimax-m3-free` — default, free tier
+- `mimo-v2.5-free` — free tier
+- `qwen3.6-plus-free` — free tier
+- `deepseek-v4-flash-free` — free tier
+- `nemotron-3-ultra-free` — free tier
+- `minimax-m2.7` — paid, latest MiniMax
+- `minimax-m2.5` — paid, previous MiniMax
+- `gpt-5` — paid, via Zen
+- `claude-sonnet-4-6` — paid, via Zen
+- `gemini-3.1-pro` — paid, via Zen
+
+The full live catalog is at `https://opencode.ai/zen/v1/models`.
+
+</details>
 
 ---
 
@@ -172,6 +278,8 @@ streamlit run Data_Analyst_Agent.py
 6. **⚙️ Customize:** Tweak settings, change themes, swap AI models
 7. **📈 Export Results:** Screenshots, insights, whatever you need
 
+[⬆ Back to top](#top)
+
 ---
 
 ## 🎯 Why Use This? (Besides My Incredible Ego)
@@ -183,6 +291,8 @@ streamlit run Data_Analyst_Agent.py
 - **Conversation Memory:** Ask follow-up questions like a normal human
 - **Free to Use:** No hidden costs, no subscription nonsense
 - **Regular Updates:** I actually maintain this thing
+
+[⬆ Back to top](#top)
 
 ---
 
@@ -207,9 +317,12 @@ pip install --upgrade streamlit
 
 ### API Issues:
 
-- The built-in API key should work automatically
-- If not, get your own from [Together AI](https://api.together.xyz/)
-- Add it in the Settings tab or as an environment variable
+- Get a key from [OpenCode Zen](https://opencode.ai/zen)
+- Add it in the **Settings** tab of the app, in `.env` (local), or in
+  Streamlit Cloud → Settings → Secrets (deployment)
+- The app will pick it up on next reload
+
+[⬆ Back to top](#top)
 
 ---
 
@@ -219,10 +332,12 @@ Made with excessive amounts of coffee, determination, and a healthy dose of sarc
 
 Special thanks to:
 
-- **Together AI** for their awesome API
+- **OpenCode Zen** for their OpenAI-compatible chat API
 - **Streamlit** for making beautiful UIs possible
 - **Meta** for Llama models that actually work
 - **You** for using this instead of doing manual analysis
+
+[⬆ Back to top](#top)
 
 ---
 
@@ -234,6 +349,8 @@ Special thanks to:
 - Dark mode may cause addiction to superior UI experiences
 - Free API usage is subject to reasonable limits (don't abuse it)
 
+[⬆ Back to top](#top)
+
 ---
 
 ## 💌 Feedback & Support
@@ -242,42 +359,116 @@ Special thanks to:
 - Email: dksdevansh@gmail.com (for serious stuff)
 - Or just scream into the void (therapeutic but less helpful)
 
+[⬆ Back to top](#top)
+
 ---
 
-## 🎉 Recent Changes (v2.0 Summary)
+## 🎉 Recent Changes (v3.0)
 
-### Major UI Overhaul:
+<details>
+<summary><h3 style="display:inline">Backend rewrite</h3></summary>
 
-- **Complete redesign** with modern tabbed interface
-- **Dark/Light theme system** with persistent settings
-- **Enhanced file upload** with drag & drop and progress tracking
-- **Interactive chat interface** with conversation history
-- **Comprehensive settings panel** for customization
+- **Together AI → OpenCode Zen.** The `together` SDK is gone. The agent
+  now uses plain `requests` against
+  `https://opencode.ai/zen/v1/chat/completions` (OpenAI-compatible).
+- **Default model:** `minimax-m3-free` (free tier; switchable from the
+  in-app Settings tab).
+- **Smaller, focused dependency list.** No more SDK lock-in.
 
-### Functionality Improvements:
+</details>
 
-- **Built-in API key** for immediate use
-- **Multiple AI model support** with easy switching
-- **Better error handling** and user feedback
-- **Auto-generated visualizations** with improved styling
-- **Session management** and data persistence
+<details>
+<summary><h3 style="display:inline">Code structure</h3></summary>
 
-### Developer Experience:
+- **`Agent.py` is now engine-only.** No more Streamlit UI or
+  ~700 lines of CSS living alongside the agent.
+- **`app.py` is the new Streamlit entrypoint.** It imports
+  `DocumentAnalystAgent` and is the file you point Streamlit Cloud at.
+- **Theme CSS cut from ~700 lines to ~50.** Scoped to stable
+  `data-testid` attributes instead of brittle internal class names.
+- **Matplotlib pinned to the `Agg` backend** so charts render on
+  headless hosts (Streamlit Cloud).
 
-- **Cleaner codebase** with better organization
-- **Improved CSS theming** with CSS variables
-- **Better responsive design** for different screen sizes
-- **Enhanced accessibility** with proper contrast ratios
+</details>
 
-### What Changed:
+<details>
+<summary><h3 style="display:inline">Deployment</h3></summary>
 
-1. **From single page** → **5-tab interface** (Home, Upload, Chat, Analytics, Settings)
-2. **Basic styling** → **Professional dark/light themes**
-3. **Manual API setup** → **Built-in free API key**
-4. **Simple file upload** → **Drag & drop with progress tracking**
-5. **Basic Q&A** → **Interactive chat with memory**
-6. **Hidden settings** → **Dedicated settings panel**
-7. **Static UI** → **Dynamic, responsive interface**
+- **One-click deploy to Streamlit Cloud.** Point at the repo, set the
+  main file to `app.py`, paste your `OPENCODE_API_KEY` into Secrets.
+- **`packages.txt` added** to install the system `tesseract` binary
+  for OCR on Cloud images.
+- **`.streamlit/config.toml`** sets sensible Cloud-friendly defaults
+  (headless, port 8501, dark theme).
+
+</details>
+
+<details>
+<summary><h3 style="display:inline">Hygiene</h3></summary>
+
+- **Real API key removed from `.env`.** Now a placeholder only.
+  Streamlit Cloud reads the real key from its Secrets manager.
+- **`ISSUES.md` added** with the full audit of the v2.0 codebase
+  (35 findings, severity-grouped, with refactor status per item).
+
+</details>
+
+<details>
+<summary><h3 style="display:inline">What Changed (v2.0 → v3.0)</h3></summary>
+
+1. **Together AI → OpenCode Zen** (OpenAI-compatible chat API)
+2. **Monolithic `Agent.py` → split into `Agent.py` (engine) + `app.py` (UI)**
+3. **Built-in free key → BYO key via `.env` or Streamlit Secrets**
+4. **Local-only → Streamlit Cloud-ready** (`packages.txt`, `config.toml`, `Agg` backend)
+5. **No CSS maintenance plan → ~50 lines of stable-selector CSS**
+6. **No security review → `ISSUES.md` audit**
+
+</details>
+
+<details>
+<summary><h3 style="display:inline">What did NOT change</h3></summary>
+
+- The 5-tab UI layout (Home, Upload, Chat, Analytics, Settings)
+- Light/Dark theme toggle
+- Supported file types (PDF, DOCX, TXT, CSV, XLSX, images)
+- Pandas / matplotlib / seaborn analysis & visualisation behaviour
+
+</details>
+
+[⬆ Back to top](#top)
+
+---
+
+## 🧭 Project History
+
+This repo went through a one-time history reset on **2026-06-05**.
+
+Prior to that date, the `main` branch carried 26 commits of v2.0 history
+that mixed the agent, the Streamlit UI, the launcher, and ~700 lines of
+theme CSS in a single 2,197-line `Agent.py` file, with a real
+`TOGETHER_API_KEY` committed to `.env`. The reset replaced that history
+with the v3.0 structure described above.
+
+If you're looking at an old clone and `git pull` shows nothing, that's
+why — please re-clone.
+
+[⬆ Back to top](#top)
+
+---
+
+## 👤 Maintainer
+
+This project is maintained solely by **[@DevanshSrajput](https://github.com/DevanshSrajput)** (Devansh Singh).
+
+As of **2026-06-05**, collaborator write access for **@aditya-ig10** has
+been revoked. The repo is now single-maintainer; PRs from other
+contributors are not accepted and pushes from outside the maintainer
+account will be force-reverted.
+
+For issues, suggestions, or security reports, contact
+`dksdevansh@gmail.com`.
+
+[⬆ Back to top](#top)
 
 ---
 
