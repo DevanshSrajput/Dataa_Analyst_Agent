@@ -89,32 +89,14 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 ## 🟡 Reliability / robustness
 
-### 1. No tests — repo root
-- **Issue:** no `tests/`, no `pytest`, no CI. Every change is a leap of
-  faith.
-- **Fix:** add a small `tests/test_agent.py` covering `process_document`
-  with a fixture file, and a mocked `_chat_complete` for
-  `answer_question`. (See G8 for the minimum scaffolding.)
-- **Skill:** pytest, mocking.
-- **File:** new `tests/` directory.
-
-### 2. Add minimal test scaffolding — new file
-- **Fix:** add `pytest.ini` (or `pyproject.toml [tool.pytest.ini_options]`),
-  `tests/__init__.py`, `tests/conftest.py` with a small CSV fixture,
-  and `tests/test_agent.py` with at least one happy-path test for
-  `process_document` and one for `answer_question` (with
-  `_chat_complete` monkeypatched).
-- **Skill:** pytest.
-- **File:** new `tests/`.
-
-### 3. In-memory state only — `Agent.py:188-191`
+### 1. In-memory state only — `Agent.py:188-191`
 - **Issue:** uploads, conversation history, analysis results live in
   `st.session_state` and on the agent instance. Refresh = total loss.
   Streamlit Cloud may recycle the container at any time.
 - **Fix:** SQLite-backed session or upload-to-S3 with a session id.
 - **Skill:** persistence, SQLite/S3.
 
-### 4. "Reset Session" deletes keys mid-render — `app.py:793-797`
+### 2. "Reset Session" deletes keys mid-render — `app.py:793-797`
 - **Where:** the loop `for key in list(st.session_state.keys()): del st.session_state[key]`
   then calls `st.rerun()`. Streamlit 1.30+ tolerates it, but earlier
   versions raise `RuntimeError: dictionary changed size during
@@ -128,7 +110,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 ## 🔵 Performance / scaling
 
-### 5. Synchronous HTTP from Streamlit — `Agent.py:144`
+### 3. Synchronous HTTP from Streamlit — `Agent.py:144`
 - **Issue:** a 1k-token completion takes 1–3 s synchronously. No
   streaming, no async. Streamlit reruns the whole script on every
   widget interaction, so the perceived latency compounds.
@@ -136,7 +118,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
   token-by-token rendering of chat responses.
 - **Skill:** async, streaming.
 
-### 6. `create_visualizations` always renders 4 charts — `Agent.py:332-415`
+### 4. `create_visualizations` always renders 4 charts — `Agent.py:332-415`
 - **Issue:** a 3-row CSV gets the full treatment including a
   correlation heatmap with a 1×1 matrix that seaborn happily renders
   and annotates. `numeric_columns` may also exceed 4 — only the first
@@ -145,7 +127,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
   when truncating columns.
 - **Skill:** matplotlib, defensive UI.
 
-### 7. `df.to_string()` is stored in agent state — `Agent.py:277`
+### 5. `df.to_string()` is stored in agent state — `Agent.py:277`
 - **Issue:** a 100k-row CSV is converted to a 10 MB+ string and stored
   in `document_content`, then truncated to 1500 chars at Q&A time. The
   truncation hides the loss, but the memory cost is paid up front.
@@ -158,14 +140,14 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 ## ⚪ Style / maintainability
 
-### 8. `app.py` mixes UI, theming, business logic, and helpers
+### 6. `app.py` mixes UI, theming, business logic, and helpers
 - The 50-line CSS block (`DARK_CSS`, `LIGHT_CSS`) could live in a
   `theme.py` or in `static/`. The `_safe_filename` helper and
   `AVAILABLE_MODELS` dict could move to `app_helpers.py`. `app.py`
   would shrink to pure UI orchestration.
 - **Skill:** refactoring, separation of concerns.
 
-### 9. Model catalogue is hard-coded and partially fictional
+### 7. Model catalogue is hard-coded and partially fictional
 - `AVAILABLE_MODELS` in `app.py:66-127` lists `mimo-v2.5-free`,
   `qwen3.6-plus-free`, `deepseek-v4-flash-free`, `nemotron-3-ultra-free`,
   `gemini-3.1-pro`, `gpt-5`, `claude-sonnet-4-6`, `minimax-m2.7` —
@@ -181,15 +163,13 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 | # | Severity | Area | One-liner |
 |---|---|---|---|
-| 1 | 🟡 | Quality | No tests |
-| 2 | 🟡 | Quality | Add minimal pytest scaffolding |
-| 3 | 🟡 | State | All state is in `st.session_state` |
-| 4 | 🟡 | Stability | `del st.session_state[key]` mid-iteration |
-| 5 | 🔵 | UX | No streaming; every rerun re-pays latency |
-| 6 | 🔵 | Noise | Charts always render, even for 3-row data |
-| 7 | 🔵 | Memory | `df.to_string()` stored in agent state |
-| 8 | ⚪ | Structure | `app.py` still mixes UI + theming + helpers |
-| 9 | ⚪ | Data | Model catalogue may include fictional entries |
+| 1 | 🟡 | State | All state is in `st.session_state` |
+| 2 | 🟡 | Stability | `del st.session_state[key]` mid-iteration |
+| 3 | 🔵 | UX | No streaming; every rerun re-pays latency |
+| 4 | 🔵 | Noise | Charts always render, even for 3-row data |
+| 5 | 🔵 | Memory | `df.to_string()` stored in agent state |
+| 6 | ⚪ | Structure | `app.py` still mixes UI + theming + helpers |
+| 7 | ⚪ | Data | Model catalogue may include fictional entries |
 
 ---
 
@@ -202,4 +182,4 @@ knowing the whole codebase. Pick any of them as your first contribution.
 🌱 **G5** — rename `Readme.md` → `README.md` (or pick one casing)
 🌱 **G6** — scope `plt.style.use` and `sns.set_palette` instead of mutating globals
 🌱 **G7** — add a `LICENSE` file
-🌱 **G8** — add minimal pytest scaffolding (pair with #7)
+🌱 **G8** — ~~add minimal pytest scaffolding~~ (done)

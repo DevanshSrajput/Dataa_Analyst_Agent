@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+# The tests/ directory is a normal package, not a namespace package.

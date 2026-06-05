@@ -19,6 +19,8 @@
   - [⚙️ Settings Tab](#-settings-tab)
 - [🛠️ How to Run](#-how-to-run-because-reading-instructions-is-actually-important)
   - [☁️ Deploy to Streamlit Cloud](#-deploy-to-streamlit-cloud-one-click)
+- [🧪 Running the Tests](#-running-the-tests)
+- [🗂️ Project Structure](#-project-structure)
 - [🔑 API Key (OpenCode Zen)](#-api-key-opencode-zen)
   - [Local Development](#local-development)
   - [Streamlit Cloud Deployment](#streamlit-cloud-deployment)
@@ -29,13 +31,12 @@
 - [📝 Credits & Thanks](#-credits--thanks)
 - [⚠️ Disclaimer](#-disclaimer)
 - [💌 Feedback & Support](#-feedback--support)
-- [🎉 Recent Changes (v3.0)](#-recent-changes-v30)
-  - [Backend Rewrite](#backend-rewrite)
-  - [Code Structure](#code-structure)
-  - [Deployment](#deployment)
-  - [Hygiene](#hygiene)
-  - [What Changed (v2.0 → v3.0)](#what-changed-v20--v30)
-  - [What Did NOT Change](#what-did-not-change)
+- [🎉 Recent Changes (v3.1)](#-recent-changes-v31)
+  - [Security & Correctness](#security--correctness)
+  - [Retrieval & UX](#retrieval--ux)
+  - [Test Coverage](#test-coverage)
+  - [Project Structure](#project-structure)
+  - [What Changed (v3.0 → v3.1)](#what-changed-v30--v31)
 - [🧭 Project History](#-project-history)
 - [👤 Maintainer](#-maintainer)
 
@@ -47,7 +48,7 @@ Welcome to **AI Document Analyst v3.0** – the tool you never knew you desperat
 
 This Python-powered, AI-infused, theme-switching, sarcasm-enabled agent will:
 
-- **Read** your PDFs, DOCX, TXT, CSV, Excel, and even images (OCR, because why not?).
+- **Read** your PDFs, DOCX, TXT, CSV, Excel (XLSX/XLS), and images (JPG, JPEG, PNG, TIFF, BMP — OCR, because why not?).
 - **Summarize** them via **OpenCode Zen** — OpenAI-compatible chat completions, with `minimax-m3-free` as the default model.
 - **Analyze** your data with pandas wizardry (the Avengers of data science).
 - **Visualize** trends and patterns with auto-generated charts (because you love pretty colors).
@@ -126,7 +127,7 @@ via the v2.0 screenshots below.
 
 ### 📤 **Upload & Process Tab**
 
-- **Multi-format Support:** PDF, DOCX, TXT, CSV, XLSX, JPG, PNG, and more
+- **Multi-format Support:** PDF, DOCX, TXT, CSV, Excel (XLSX/XLS), and images (JPG, JPEG, PNG, TIFF, BMP)
 - **Drag & Drop Interface:** Because clicking is so 2010
 - **Real-time Processing:** Watch your files get analyzed in real-time
 - **Progress Tracking:** Know exactly what's happening (transparency is key)
@@ -206,6 +207,58 @@ If `streamlit` is on your `PATH` you can also do `python -m streamlit run app.py
 
 > `packages.txt` in the repo root installs the system `tesseract` binary
 > on the Cloud image so image OCR works.
+
+[⬆ Back to top](#top)
+
+---
+
+## 🧪 Running the Tests
+
+The repo ships with a 28-test suite under `tests/` that covers extraction
+failures, BM25 retrieval, the SSRF policy, the path-traversal-safe
+filename helper, and the extension allowlist. Run it with either:
+
+```sh
+# stdlib only — works out of the box, no install step
+python -m unittest discover -s tests -v
+
+# or, if you've installed pytest as a dev dep:
+python -m pytest tests -v
+```
+
+The suite finishes in ~100 ms because it stubs the LLM layer and never
+hits the network. Heavy visualization deps (matplotlib, seaborn, PIL,
+pytesseract) are not imported by the tests.
+
+To install pytest (optional):
+
+```sh
+pip install pytest
+```
+
+[⬆ Back to top](#top)
+
+---
+
+## 🗂️ Project Structure
+
+```
+Dataa_Analyst_Agent/
+├── app.py              # Streamlit UI — the entrypoint for `streamlit run`
+├── Agent.py            # Engine: extractors, BM25 retriever, OpenCode Zen client
+├── ISSUES.md           # Open audit findings (7 items open as of v3.1)
+├── Readme.md           # You are here
+├── requirements.txt    # Python runtime deps
+├── packages.txt        # System deps (tesseract for OCR on Streamlit Cloud)
+├── pyproject.toml      # [tool.pytest.ini_options] for the test suite
+├── .streamlit/
+│   └── config.toml     # Cloud-friendly Streamlit defaults
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py     # Shared fixtures (works under pytest OR unittest)
+│   └── test_agent.py   # 28 tests covering extraction, retrieval, SSRF
+└── venv/               # Local virtualenv (not committed)
+```
 
 [⬆ Back to top](#top)
 
@@ -363,75 +416,110 @@ Special thanks to:
 
 ---
 
-## 🎉 Recent Changes (v3.0)
+## 🎉 Recent Changes (v3.1)
+
+The v3.0 cutover (June 2026) shipped the OpenCode Zen migration and the
+`Agent.py` / `app.py` split. **v3.1** layers a security + correctness
+pass on top of that, plus the retrieval upgrade and a real test suite.
 
 <details>
-<summary><h3 style="display:inline">Backend rewrite</h3></summary>
+<summary><h3 style="display:inline">Security &amp; correctness</h3></summary>
 
-- **Together AI → OpenCode Zen.** The `together` SDK is gone. The agent
-  now uses plain `requests` against
-  `https://opencode.ai/zen/v1/chat/completions` (OpenAI-compatible).
-- **Default model:** `minimax-m3-free` (free tier; switchable from the
-  in-app Settings tab).
-- **Smaller, focused dependency list.** No more SDK lock-in.
+- **XSS in chat output fixed.** The `unsafe_allow_html=True` blocks
+  that interpolated LLM output into HTML (10+ call sites in `app.py`)
+  are gone. The chat response now uses `st.chat_message`, which
+  sanitizes by default. The only remaining `unsafe_allow_html=True`
+  is the CSS-injection at `app.py:217`, which has to be raw HTML for
+  theming to work.
+- **Path-traversal via uploaded filename fixed.** The original
+  `temp_<uploaded_file.name>` sink is gone. Uploads now go to
+  `temp_uploads/<uuid>.<safe_ext>` via `app._safe_filename()` (a
+  werkzeug-free sanitizer: basename + allowlist regex + UUID fallback).
+  All 18 adversarial inputs (path traversal, shell metacharacters,
+  Windows backslashes, 300-char overflow) resolve to paths strictly
+  inside `temp_uploads/`.
+- **SSRF chokepoint added.** `Agent.safe_fetch_url()` is now the only
+  path any future URL fetcher should use. Validates scheme
+  (http/https), blocks 17 private/loopback/link-local IPv4 + IPv6
+  ranges, normalises IPv4-mapped IPv6, and re-checks DNS + redirects
+  at every hop to defeat DNS rebinding. A `SECURITY:` comment at the
+  `import requests` line points future contributors to it.
+- **Extraction errors no longer fed to the LLM.** The four
+  `extract_*` helpers now raise instead of returning an error string.
+  `process_document` returns `success: bool` + `error: str | None`; on
+  failure `content` and `summary` are **empty** and the file is **not**
+  added to `document_content` or `data_frames`. The UI short-circuits
+  the render + viz pipeline and shows `st.error` with the actual
+  message. `load_structured_data` no longer silently returns an empty
+  DataFrame on failure (silent data loss bug).
+- **Extension allowlist unified.** `Agent._SUPPORTED_EXTENSIONS` is
+  the single source of truth. The `st.file_uploader` `type=` list is
+  derived from it, so adding an extension once extends both layers.
+  Side effect: `tiff` and `bmp` uploads now actually reach the OCR
+  extractor (they were silently dropped by the uploader filter before).
 
 </details>
 
 <details>
-<summary><h3 style="display:inline">Code structure</h3></summary>
+<summary><h3 style="display:inline">Retrieval &amp; UX</h3></summary>
 
-- **`Agent.py` is now engine-only.** No more Streamlit UI or
-  ~700 lines of CSS living alongside the agent.
-- **`app.py` is the new Streamlit entrypoint.** It imports
-  `DocumentAnalystAgent` and is the file you point Streamlit Cloud at.
-- **Theme CSS cut from ~700 lines to ~50.** Scoped to stable
-  `data-testid` attributes instead of brittle internal class names.
-- **Matplotlib pinned to the `Agg` backend** so charts render on
-  headless hosts (Streamlit Cloud).
-
-</details>
-
-<details>
-<summary><h3 style="display:inline">Deployment</h3></summary>
-
-- **One-click deploy to Streamlit Cloud.** Point at the repo, set the
-  main file to `app.py`, paste your `OPENCODE_API_KEY` into Secrets.
-- **`packages.txt` added** to install the system `tesseract` binary
-  for OCR on Cloud images.
-- **`.streamlit/config.toml`** sets sensible Cloud-friendly defaults
-  (headless, port 8501, dark theme).
+- **BM25 retrieval replaces blind truncation.** `answer_question` used
+  to send only the first `[:1500]` chars per doc and the first
+  `[:4000]` of the assembled context to the LLM. A 50-page PDF or a
+  10-section CSV left the model blind past the opening pages. Now
+  `process_document` chunks text at extraction time
+  (paragraph-aware, 800/150), and `answer_question` scores chunks
+  with a stdlib BM25-lite ranker and sends the top-4 per doc into a
+  12k-char context budget. Pure stdlib — no sentence-transformers,
+  no chromadb. A follow-up could swap the ranker for embedding-based
+  cosine similarity without changing the chunker or the budget.
+- **Visualisations no longer leak into CWD.** The old
+  `visualizations_<file_name>/` in the repo root is gone. Charts now
+  go to a per-agent UUID-keyed subdir of `tempfile.gettempdir()` and
+  are also kept in memory as `(label, png_bytes)` pairs on the agent
+  (consumed by the analytics tab on subsequent reruns).
+  `clear_visualizations()` is wired to the "Clear All Files" button.
 
 </details>
 
 <details>
-<summary><h3 style="display:inline">Hygiene</h3></summary>
+<summary><h3 style="display:inline">Test coverage</h3></summary>
 
-- **Real API key removed from `.env`.** Now a placeholder only.
-  Streamlit Cloud reads the real key from its Secrets manager.
-- **`ISSUES.md` added** with the full audit of the v2.0 codebase
-  (35 findings, severity-grouped, with refactor status per item).
-
-</details>
-
-<details>
-<summary><h3 style="display:inline">What Changed (v2.0 → v3.0)</h3></summary>
-
-1. **Together AI → OpenCode Zen** (OpenAI-compatible chat API)
-2. **Monolithic `Agent.py` → split into `Agent.py` (engine) + `app.py` (UI)**
-3. **Built-in free key → BYO key via `.env` or Streamlit Secrets**
-4. **Local-only → Streamlit Cloud-ready** (`packages.txt`, `config.toml`, `Agg` backend)
-5. **No CSS maintenance plan → ~50 lines of stable-selector CSS**
-6. **No security review → `ISSUES.md` audit**
+- **28 tests** in `tests/test_agent.py` (zero new dependencies; runs
+  under stdlib `unittest` or `pytest`).
+- Coverage: extension detection + allowlist, `_safe_filename` for
+  path-traversal safety, `process_document` happy + failure paths,
+  BM25 retrieval surfaces the right chunk, `safe_fetch_url` blocks
+  unsafe schemes + private IP ranges, BM25 ranker correctness.
+- No network calls, no heavy-dep imports in the test path. Full
+  suite finishes in ~100 ms.
 
 </details>
 
 <details>
-<summary><h3 style="display:inline">What did NOT change</h3></summary>
+<summary><h3 style="display:inline">Project structure</h3></summary>
 
-- The 5-tab UI layout (Home, Upload, Chat, Analytics, Settings)
-- Light/Dark theme toggle
-- Supported file types (PDF, DOCX, TXT, CSV, XLSX, images)
-- Pandas / matplotlib / seaborn analysis & visualisation behaviour
+- `app.py` — Streamlit UI (the entrypoint for `streamlit run`).
+- `Agent.py` — engine: extractors, BM25 retriever, OpenCode Zen
+  client, `safe_fetch_url` SSRF chokepoint.
+- `tests/` — 28 tests + shared fixtures (`conftest.py`).
+- `pyproject.toml` — `[tool.pytest.ini_options]` for the test suite.
+- `ISSUES.md` — personal-tracked audit; updated as each fix lands.
+- `.streamlit/config.toml` — Cloud-friendly defaults (port 8501, headless).
+
+</details>
+
+<details>
+<summary><h3 style="display:inline">What Changed (v3.0 → v3.1)</h3></summary>
+
+1. **XSS in chat output** (10+ `unsafe_allow_html` sites) → `st.chat_message`
+2. **Path-traversal sink** (`temp_<uploaded_name>`) → UUID-keyed `temp_uploads/`
+3. **SSRF TODO** → working `safe_fetch_url()` chokepoint
+4. **Extraction errors fed to LLM** → `success: bool` + UI short-circuit
+5. **Blind [:4000] truncation** → BM25 retrieval over pre-chunked text
+6. **`visualizations_*` dirs in CWD** → in-memory bytes + `tempfile.gettempdir()`
+7. **Hardcoded extension list** → `Agent._SUPPORTED_EXTENSIONS` (single source of truth)
+8. **No tests** → 28-test suite under `tests/`
 
 </details>
 
