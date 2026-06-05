@@ -412,8 +412,16 @@ def main() -> None:
             uploaded_files = st.file_uploader(
                 "Choose files to analyze",
                 accept_multiple_files=True,
-                type=["pdf", "docx", "txt", "csv", "xlsx", "jpg", "jpeg", "png", "xls"],
-                help="Supported formats: PDF, DOCX, TXT, CSV, Excel, Images (JPG, PNG)",
+                # ISSUES.md: derive the uploader allowlist from
+                # `Agent._SUPPORTED_EXTENSIONS` so the upload widget
+                # and the extractor can never disagree. If you add a
+                # new type, add it to that frozenset — the widget
+                # picks it up automatically.
+                type=sorted(Agent._SUPPORTED_EXTENSIONS),
+                help=(
+                    "Supported formats: PDF, DOCX, TXT, CSV, Excel "
+                    "(XLSX/XLS), Images (JPG, JPEG, PNG, TIFF, BMP)"
+                ),
                 key="main_uploader",
             )
             st.markdown(
