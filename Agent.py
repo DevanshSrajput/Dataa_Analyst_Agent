@@ -24,9 +24,12 @@ import os
 import sys
 import warnings
 import time
+import uuid
+import shutil
+import tempfile
 import socket
 import ipaddress
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 warnings.filterwarnings('ignore')
 
 # Mark this module as running under Streamlit so the noisy status prints
@@ -357,6 +360,20 @@ class DocumentAnalystAgent:
         self.analysis_results: Dict[str, Dict[str, Any]] = {}
         self.conversation_history: List[Dict[str, Any]] = []
 
+        # Per-agent viz dir. UUID-keyed under the system temp dir so
+        # (a) it can't collide with anything in the app CWD, and
+        # (b) Streamlit Cloud's ephemeral disk survives redeploys.
+        # The dir is created lazily by `create_visualizations`.
+        self._viz_dir: str = os.path.join(
+            tempfile.gettempdir(),
+            f"dataa_analyst_viz_{uuid.uuid4().hex}",
+        )
+        # Per-file viz cache: file_name -> list of (label, png_bytes).
+        # Populated by `create_visualizations`; consumed by the UI on
+        # subsequent reruns (analytics tab doesn't re-render the charts
+        # every time, it just re-displays the cached bytes).
+        self.visualizations: Dict[str, List[Tuple[str, bytes]]] = {}
+
         # Set up plotting style
         plt.style.use('default')
         sns.set_palette("husl")
@@ -509,36 +526,59 @@ class DocumentAnalystAgent:
 
         return analysis
 
-    def create_visualizations(self, df: pd.DataFrame, file_name: str) -> List[str]:
+    def create_visualizations(self, df: pd.DataFrame, file_name: str) -> List[Tuple[str, bytes]]:
         """
-        Create various visualizations for the data.
+        Render a battery of standard charts for `df` and return them as
+        `(label, png_bytes)` pairs. PNGs are also written to the agent's
+        per-instance temp dir (`self._viz_dir`) so the analytics tab can
+        re-render them on subsequent Streamlit reruns without recomputing.
+
+        ISSUES.md #2 (visualizations persist): the old code wrote to
+        `visualizations_<file_name>/` in the CWD, which on Streamlit
+        Cloud is the repo root and which collides across sessions. The
+        new layout is a UUID-keyed subdir of `tempfile.gettempdir()`,
+        owned by the agent instance and freed by `clear_visualizations`.
+
+        Args:
+            df: the DataFrame to chart.
+            file_name: kept for backwards-compatible labeling of the
+                output PNGs (no longer used to derive a path).
+
+        Returns:
+            List of `(label, bytes)` tuples. May be empty if `df` has
+            no numeric or categorical columns.
         """
-        visualization_paths = []
+        visualizations: List[Tuple[str, bytes]] = []
         numeric_columns = df.select_dtypes(include=[np.number]).columns
         categorical_columns = df.select_dtypes(include=['object']).columns
 
-        # Create output directory
-        output_dir = f"visualizations_{file_name.replace('.', '_')}"
-        os.makedirs(output_dir, exist_ok=True)
+        # Lazy-create the per-agent viz dir on first use.
+        os.makedirs(self._viz_dir, exist_ok=True)
+
+        def _save(label: str, fname: str) -> Tuple[str, bytes]:
+            """Save the current figure to `_viz_dir/fname` AND to memory.
+            Returns `(label, bytes)` for the caller to render.
+            """
+            path = os.path.join(self._viz_dir, fname)
+            plt.savefig(path, dpi=300, bbox_inches='tight')
+            plt.close()
+            with open(path, "rb") as f:
+                data = f.read()
+            return (label, data)
 
         try:
             # 1. Distribution plots for numeric columns
             if len(numeric_columns) > 0:
                 fig, axes = plt.subplots(2, 2, figsize=(15, 10))
                 axes = axes.ravel()
-
                 for i, col in enumerate(numeric_columns[:4]):
                     if i < len(axes):
                         df[col].hist(bins=30, ax=axes[i])
                         axes[i].set_title(f'Distribution of {col}')
                         axes[i].set_xlabel(col)
                         axes[i].set_ylabel('Frequency')
-
                 plt.tight_layout()
-                dist_path = os.path.join(output_dir, 'distributions.png')
-                plt.savefig(dist_path, dpi=300, bbox_inches='tight')
-                plt.close(fig)
-                visualization_paths.append(dist_path)
+                visualizations.append(_save("Distributions", "distributions.png"))
 
             # 2. Correlation heatmap
             if len(numeric_columns) > 1:
@@ -546,34 +586,24 @@ class DocumentAnalystAgent:
                 correlation_matrix = df[numeric_columns].corr()
                 sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', center=0)
                 plt.title('Correlation Heatmap')
-                corr_path = os.path.join(output_dir, 'correlation_heatmap.png')
-                plt.savefig(corr_path, dpi=300, bbox_inches='tight')
-                plt.close()
-                visualization_paths.append(corr_path)
+                visualizations.append(_save("Correlation Heatmap", "correlation_heatmap.png"))
 
             # 3. Box plots for numeric columns
             if len(numeric_columns) > 0:
                 n_plots = min(3, len(numeric_columns))
-
                 fig, ax_array = plt.subplots(1, n_plots, figsize=(15, 5), squeeze=False)
                 axes = ax_array.flatten()
-
                 for i, col in enumerate(numeric_columns[:n_plots]):
                     df.boxplot(column=col, ax=axes[i])
                     axes[i].set_title(f'Box Plot of {col}')
-
                 plt.tight_layout()
-                box_path = os.path.join(output_dir, 'box_plots.png')
-                plt.savefig(box_path, dpi=300, bbox_inches='tight')
-                plt.close(fig)
-                visualization_paths.append(box_path)
+                visualizations.append(_save("Box Plots", "box_plots.png"))
 
             # 4. Bar charts for categorical columns
             if len(categorical_columns) > 0:
                 n_cat_plots = min(2, len(categorical_columns))
                 fig, ax_array = plt.subplots(1, n_cat_plots, figsize=(15, 6), squeeze=False)
                 axes = ax_array.flatten()
-
                 for i, col in enumerate(categorical_columns[:n_cat_plots]):
                     if df[col].nunique() <= 20:
                         value_counts = df[col].value_counts().head(10)
@@ -582,17 +612,28 @@ class DocumentAnalystAgent:
                         axes[i].set_xlabel(col)
                         axes[i].set_ylabel('Count')
                         axes[i].tick_params(axis='x', rotation=45)
-
                 plt.tight_layout()
-                bar_path = os.path.join(output_dir, 'categorical_bars.png')
-                plt.savefig(bar_path, dpi=300, bbox_inches='tight')
-                plt.close(fig)
-                visualization_paths.append(bar_path)
+                visualizations.append(_save("Categorical Bars", "categorical_bars.png"))
 
         except Exception as e:
-            print(f"Error creating visualizations: {str(e)}")
+            if os.environ.get("STREAMLIT_RUN") != "1":
+                print(f"Error creating visualizations: {e}")
 
-        return visualization_paths
+        # Cache for later re-display (analytics tab reads this).
+        self.visualizations[file_name] = visualizations
+        return visualizations
+
+    def clear_visualizations(self) -> None:
+        """Delete the per-agent viz dir and recreate it empty.
+
+        Called from the "Clear All Files" and "Reset Session" buttons
+        in app.py so we don't leak temp PNGs across resets. Idempotent
+        — silently no-ops if the dir doesn't exist.
+        """
+        if os.path.isdir(self._viz_dir):
+            shutil.rmtree(self._viz_dir, ignore_errors=True)
+        os.makedirs(self._viz_dir, exist_ok=True)
+        self.visualizations.clear()
 
     # ---- LLM interactions ---------------------------------------------------
 

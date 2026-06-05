@@ -350,6 +350,9 @@ def main() -> None:
                 agent.data_frames.clear()
                 agent.analysis_results.clear()
                 agent.conversation_history.clear()
+                # ISSUES.md #2: also free the per-agent temp viz dir
+                # and the in-memory bytes cache.
+                agent.clear_visualizations()
                 st.success("✨ All files cleared!")
                 st.rerun()
 
@@ -518,21 +521,17 @@ def main() -> None:
                                 )
 
                         with st.spinner("🎨 Creating visualizations..."):
-                            viz_paths = agent.create_visualizations(df, uploaded_file.name)
-                            if viz_paths:
+                            # ISSUES.md #2: agent now returns (label, bytes)
+                            # pairs; render straight from memory rather than
+                            # reading back from `visualizations_<name>/` in CWD.
+                            viz_pairs = agent.create_visualizations(df, uploaded_file.name)
+                            if viz_pairs:
                                 with st.expander(f"📈 Auto-Generated Charts - {uploaded_file.name}"):
                                     viz_cols = st.columns(2)
-                                    for idx, viz_path in enumerate(viz_paths):
-                                        if os.path.exists(viz_path):
-                                            with viz_cols[idx % 2]:
-                                                chart_name = (
-                                                    os.path.basename(viz_path)
-                                                    .replace(".png", "")
-                                                    .replace("_", " ")
-                                                    .title()
-                                                )
-                                                st.markdown(f"**{chart_name}**")
-                                                st.image(viz_path, use_container_width=True)
+                                    for idx, (chart_name, png_bytes) in enumerate(viz_pairs):
+                                        with viz_cols[idx % 2]:
+                                            st.markdown(f"**{chart_name}**")
+                                            st.image(png_bytes, use_container_width=True)
 
                 except Exception as e:
                     # This `except` is now a safety net for unexpected
@@ -695,20 +694,19 @@ def main() -> None:
                         st.markdown("**📈 Statistical Summary:**")
                         st.dataframe(numeric_df.describe(), use_container_width=True)
 
-                    viz_dir = f"visualizations_{file_name.replace('.', '_')}"
-                    if os.path.exists(viz_dir):
-                        viz_files = [f for f in os.listdir(viz_dir) if f.endswith(".png")]
-                        if viz_files:
-                            st.markdown("**📊 Visualizations:**")
-                            for viz_file in viz_files:
-                                viz_path = os.path.join(viz_dir, viz_file)
-                                chart_name = (
-                                    viz_file.replace(".png", "")
-                                    .replace("_", " ")
-                                    .title()
-                                )
-                                st.markdown(f"*{chart_name}*")
-                                st.image(viz_path, use_container_width=True)
+                    # ISSUES.md #2: read viz bytes from the in-memory
+                    # cache (`agent.visualizations`) instead of listing
+                    # `visualizations_<file_name>/` in the CWD. The
+                    # agent populates the cache when create_visualizations
+                    # is called (during upload), and the bytes survive
+                    # Streamlit reruns because they live on the agent
+                    # instance inside `st.session_state`.
+                    viz_pairs = agent.visualizations.get(file_name, [])
+                    if viz_pairs:
+                        st.markdown("**📊 Visualizations:**")
+                        for chart_name, png_bytes in viz_pairs:
+                            st.markdown(f"*{chart_name}*")
+                            st.image(png_bytes, use_container_width=True)
 
     # ---- TAB 5: SETTINGS ----
     with tab5:
