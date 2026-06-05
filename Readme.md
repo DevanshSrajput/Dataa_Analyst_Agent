@@ -219,7 +219,7 @@ If `streamlit` is on your `PATH` you can also do `python -m streamlit run app.py
 
 ## 🧪 Running the Tests
 
-The repo ships with a 49-test suite under `tests/` that covers extraction
+The repo ships with a 56-test suite under `tests/` that covers extraction
 failures, BM25 retrieval, the SSRF policy, the path-traversal-safe
 filename helper, and the extension allowlist. Run it with either:
 
@@ -261,7 +261,7 @@ Dataa_Analyst_Agent/
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py     # Shared fixtures (works under pytest OR unittest)
-│   └── test_agent.py   # 49 tests covering extraction, retrieval, SSRF, persistence, reset path, streaming, viz guards
+│   └── test_agent.py   # 56 tests covering extraction, retrieval, SSRF, persistence, reset path, streaming, viz guards, DataFrame preview
 └── venv/               # Local virtualenv (not committed)
 ```
 
@@ -525,7 +525,7 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 <details>
 <summary><h3 style="display:inline">Test coverage</h3></summary>
 
-- **49 tests** in `tests/test_agent.py` (one new optional dep:
+- **56 tests** in `tests/test_agent.py` (one new optional dep:
   `httpx`, used lazily for streaming; runs under stdlib `unittest` or
   `pytest`).
 - Coverage: extension detection + allowlist, `_safe_filename` for
@@ -535,9 +535,11 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
   SQLite persistence across container recycle, Reset Session
   handler (no mid-iteration `del`, wipes on-disk store),
   token-by-token streaming (SSE parser, error surfacing, full-text
-  persistence), and visualization guards (empty/short dfs skip
-  the right chart types, column truncation is surfaced in the
-  label).
+  persistence), visualization guards (empty/short dfs skip the
+  right chart types, column truncation is surfaced in the
+  label), and DataFrame preview storage (large CSVs no longer
+  inflate document_content or the SQLite documents row; the
+  full DataFrame hydrates from parquet).
 - No network calls, no heavy-dep imports in the test path. Full
   suite finishes in ~100 ms.
 
@@ -549,7 +551,7 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 - `app.py` — Streamlit UI (the entrypoint for `streamlit run`).
 - `Agent.py` — engine: extractors, BM25 retriever, OpenCode Zen
   client, `safe_fetch_url` SSRF chokepoint.
-- `tests/` — 49 tests + shared fixtures (`conftest.py`).
+- `tests/` — 56 tests + shared fixtures (`conftest.py`).
 - `pyproject.toml` — `[tool.pytest.ini_options]` for the test suite.
 - `ISSUES.md` — personal-tracked audit; updated as each fix lands.
 - `.streamlit/config.toml` — Cloud-friendly defaults (port 8501, headless).
@@ -566,7 +568,7 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 5. **Blind [:4000] truncation** → BM25 retrieval over pre-chunked text
 6. **`visualizations_*` dirs in CWD** → in-memory bytes + `tempfile.gettempdir()`
 7. **Hardcoded extension list** → `Agent._SUPPORTED_EXTENSIONS` (single source of truth)
-8. **No tests** → 49-test suite under `tests/`
+8. **No tests** → 56-test suite under `tests/`
 9. **In-memory state lost on container recycle** → SQLite store under
    `tempfile.gettempdir()`, hydrated on init, write-through on every
    mutation. No new deps.
@@ -585,6 +587,14 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
     → no box plot, <2 numeric cols → no heatmap, and column
     truncation is surfaced in the label as
     `"Distributions (showing 4 of 12)"`.
+13. **`df.to_string()` stored in agent state (10 MB+ for 100k rows)** →
+    `process_document` now stores a bounded preview (shape,
+    columns, dtypes, first 20 rows) in
+    `document_content[file_name]["content"]` and the SQLite
+    documents table. The full DataFrame is still in
+    `data_frames[file_name]` (parquet blob, hydrated on
+    container recycle). A 100k-row CSV's `content` is now
+    bounded under 5 KB instead of >10 MB.
 
 </details>
 

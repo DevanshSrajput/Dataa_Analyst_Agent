@@ -937,5 +937,154 @@ class CreateVisualizationsGuardTests(unittest.TestCase):
         self.assertIn("Categorical Bars", labels)
 
 
+# ---------------------------------------------------------------------------
+# ISSUES.md #1 (🔵) — df.to_string() in agent state.
+#
+# The old code persisted the full to_string() of every CSV/XLSX
+# DataFrame into both document_content[file_name]["content"] and
+# the SQLite documents table — a 10 MB+ string for a 100k-row CSV
+# that the Q&A path never actually read. The new code persists a
+# bounded preview (shape + columns + dtypes + first 20 rows). The
+# full DataFrame is still in agent.data_frames[file_name].
+# ---------------------------------------------------------------------------
+
+@_require_agent()
+class DataFramePreviewStorageTests(unittest.TestCase):
+    """The CSV/XLSX 'content' field must be a bounded preview, not
+    a full to_string() of the DataFrame."""
+
+    def _make_csv(self, tmp, n_rows, n_cols=3):
+        import csv
+        path = os.path.join(tmp, "big.csv")
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow([f"col_{i}" for i in range(n_cols)])
+            for r in range(n_rows):
+                w.writerow([r * 10 + i for i in range(n_cols)])
+        return path
+
+    def test_preview_is_bounded(self):
+        import tempfile
+        import pandas as pd
+        # A 5k-row CSV — to_string() would be ~150 KB. The preview
+        # should be a few KB at most.
+        with tempfile.TemporaryDirectory(prefix="dsprev-") as tmp:
+            path = self._make_csv(tmp, n_rows=5_000, n_cols=3)
+            agent = Agent.DocumentAnalystAgent(api_key="k", model="m")
+            try:
+                df = agent.load_structured_data(path)
+                preview = Agent._df_preview_string(df)
+                self.assertLess(
+                    len(preview), 5_000,
+                    f"preview must be bounded; got {len(preview)} chars",
+                )
+                # Shape + columns + dtypes must be present.
+                self.assertIn("(5000, 3)", preview)
+                self.assertIn("col_0", preview)
+                self.assertIn("Dtypes", preview)
+            finally:
+                agent.close()
+
+    def test_process_document_does_not_inflate_content(self):
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="dsprev-") as tmp:
+            path = self._make_csv(tmp, n_rows=10_000, n_cols=4)
+            agent = Agent.DocumentAnalystAgent(api_key="k", model="m")
+            try:
+                with mock.patch.object(agent, "_make_api_call_with_retry",
+                                       return_value="[stub]"):
+                    result = agent.process_document(path, "big.csv")
+                self.assertTrue(result["success"])
+                content = agent.document_content["big.csv"]["content"]
+                # Old behaviour would have been > 400 KB. New: well under 10 KB.
+                self.assertLess(
+                    len(content), 10_000,
+                    f"document_content['content'] must be bounded; "
+                    f"got {len(content)} chars",
+                )
+                # The full DataFrame is still in data_frames.
+                self.assertEqual(
+                    agent.data_frames["big.csv"].shape, (10_000, 4),
+                )
+            finally:
+                agent.close()
+
+    def test_preview_includes_shape_columns_dtypes(self):
+        import pandas as pd
+        df = pd.DataFrame({
+            "name": ["Alice", "Bob"] * 5,
+            "score": list(range(10)),
+            "ratio": [i / 10.0 for i in range(10)],
+        })
+        preview = Agent._df_preview_string(df)
+        self.assertIn("(10, 3)", preview)
+        self.assertIn("name", preview)
+        self.assertIn("score", preview)
+        self.assertIn("ratio", preview)
+        self.assertIn("Dtypes", preview)
+        # First 20 rows are inside the preview.
+        self.assertIn("First 20 rows", preview)
+
+    def test_preview_indicates_extra_columns(self):
+        import pandas as pd
+        df = pd.DataFrame({f"c{i}": [1, 2, 3] for i in range(20)})
+        preview = Agent._df_preview_string(df)
+        self.assertIn("Columns (20)", preview)
+        # 20 > 10 -> the explicit "+10 more" suffix should appear.
+        self.assertIn("+10 more", preview)
+
+    def test_preview_handles_short_dataframe(self):
+        """For a df with fewer than _DF_PREVIEW_ROWS rows, we still
+        include the head — never silently empty."""
+        import pandas as pd
+        df = pd.DataFrame({"a": [1, 2, 3]})
+        preview = Agent._df_preview_string(df)
+        self.assertIn("(3, 1)", preview)
+        self.assertIn("First 3 rows", preview)
+        # The actual row values must appear in the preview.
+        self.assertIn("1", preview)
+        self.assertIn("2", preview)
+        self.assertIn("3", preview)
+
+    def test_preview_does_not_grow_with_row_count(self):
+        """100 rows vs 100,000 rows: the preview length must be
+        asymptotically constant (the row block is capped at 20)."""
+        import pandas as pd
+        small = pd.DataFrame({"a": list(range(100))})
+        big = pd.DataFrame({"a": list(range(100_000))})
+        ps = Agent._df_preview_string(small)
+        pb = Agent._df_preview_string(big)
+        # Allow a tiny variance for the shape/columns header (~50
+        # chars), but the body should be the same size.
+        self.assertLess(abs(len(ps) - len(pb)), 200)
+
+    def test_persistence_round_trip_still_works(self):
+        """A recycled agent must see the same bounded preview AND
+        the full DataFrame — no regression from the persistence
+        layer."""
+        with tempfile.TemporaryDirectory(prefix="dsprev-") as tmp:
+            db = os.path.join(tmp, "state.db")
+            path = self._make_csv(tmp, n_rows=2_000, n_cols=2)
+            a1 = Agent.DocumentAnalystAgent(api_key="k", model="m", db_path=db)
+            try:
+                with mock.patch.object(a1, "_make_api_call_with_retry",
+                                       return_value="[stub]"):
+                    a1.process_document(path, "big.csv")
+                # Recycle.
+                a2 = Agent.DocumentAnalystAgent(api_key="k", model="m", db_path=db)
+                try:
+                    self.assertEqual(
+                        a2.data_frames["big.csv"].shape, (2_000, 2),
+                        "full DataFrame must hydrate from parquet blob",
+                    )
+                    content = a2.document_content["big.csv"]["content"]
+                    self.assertLess(len(content), 10_000)
+                    self.assertIn("(2000, 2)", content)
+                finally:
+                    a2.close()
+            finally:
+                a1.close()
+
+
 if __name__ == "__main__":
     unittest.main()

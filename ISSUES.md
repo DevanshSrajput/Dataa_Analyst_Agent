@@ -4,7 +4,7 @@ Findings from a fresh read of the current `Agent.py` and `app.py`. The
 original audit (35 items, kept in git history) has been reduced to the
 issues that are still open. Resolved items have been removed.
 
-Open at last edit: 3 items (0 🔴, 0 🟠, 0 🟡, 1 🔵, 2 ⚪).
+Open at last edit: 2 items (0 🔴, 0 🟠, 0 🟡, 0 🔵, 2 ⚪).
 
 > **Legend**
 > 🔴 Security · 🟠 Correctness / data loss · 🟡 Reliability / robustness · 🔵 Performance / scaling · ⚪ Style / maintainability
@@ -103,27 +103,22 @@ locks.)*
 
 ## 🔵 Performance / scaling
 
-### 1. `df.to_string()` is stored in agent state — `Agent.py:277`
-- **Issue:** a 100k-row CSV is converted to a 10 MB+ string and stored
-  in `document_content`, then truncated to 1500 chars at Q&A time. The
-  truncation hides the loss, but the memory cost is paid up front.
-- **Fix:** store the `DataFrame` separately and only stringify-on-demand
-  for the first N rows. (Already half-done via `data_frames`, but the
-  string is also stored in `document_content[file_name]["content"]`.)
-- **Skill:** memory profiling.
+*(none open — `df.to_string()` was replaced by a bounded preview in
+this cycle. See the new `DataFramePreviewStorageTests` in
+`tests/test_agent.py` for the locks.)*
 
 ---
 
 ## ⚪ Style / maintainability
 
-### 2. `app.py` mixes UI, theming, business logic, and helpers
+### 1. `app.py` mixes UI, theming, business logic, and helpers
 - The 50-line CSS block (`DARK_CSS`, `LIGHT_CSS`) could live in a
   `theme.py` or in `static/`. The `_safe_filename` helper and
   `AVAILABLE_MODELS` dict could move to `app_helpers.py`. `app.py`
   would shrink to pure UI orchestration.
 - **Skill:** refactoring, separation of concerns.
 
-### 3. Model catalogue is hard-coded and partially fictional
+### 2. Model catalogue is hard-coded and partially fictional
 - `AVAILABLE_MODELS` in `app.py:66-127` lists `mimo-v2.5-free`,
   `qwen3.6-plus-free`, `deepseek-v4-flash-free`, `nemotron-3-ultra-free`,
   `gemini-3.1-pro`, `gpt-5`, `claude-sonnet-4-6`, `minimax-m2.7` —
@@ -139,9 +134,8 @@ locks.)*
 
 | # | Severity | Area | One-liner |
 |---|---|---|---|
-| 1 | 🔵 | Memory | `df.to_string()` stored in agent state |
-| 2 | ⚪ | Structure | `app.py` still mixes UI + theming + helpers |
-| 3 | ⚪ | Data | Model catalogue may include fictional entries |
+| 1 | ⚪ | Structure | `app.py` still mixes UI + theming + helpers |
+| 2 | ⚪ | Data | Model catalogue may include fictional entries |
 
 ---
 

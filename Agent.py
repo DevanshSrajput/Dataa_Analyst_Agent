@@ -572,6 +572,51 @@ def _extension_of(name: str) -> str:
     return ext.lstrip(".").lower()
 
 
+# Cap for the CSV/XLSX "content" string stored in document_content
+# and the SQLite documents table. A 100k-row, 30-col DataFrame would
+# otherwise produce a 10 MB+ string that's persisted twice (in-memory
+# + on-disk) and never actually read by the Q&A path (it uses
+# `summary` + `analysis_results` instead). The preview gives the
+# report generator something to display while bounding memory.
+_DF_PREVIEW_ROWS = 20
+
+
+def _df_preview_string(df: "pd.DataFrame", max_rows: int = _DF_PREVIEW_ROWS) -> str:
+    """Return a bounded string representation of `df` for storage
+    in `document_content[file_name]["content"]` and the on-disk
+    documents table.
+
+    Shape:
+        DataFrame shape: (100000, 30)
+        Columns: ['a', 'b', 'c', ...]
+        Dtypes: a: int64, b: float64, ...
+
+    First N rows (max `max_rows`):
+            a      b      c
+        0   1    2.0   foo
+        ...
+
+    The total length is bounded by `max_rows` and the DataFrame's
+    column count, so it stays in the single-digit KB range even for
+    wide frames. The full DataFrame is still available via
+    `agent.data_frames[file_name]`.
+    """
+    try:
+        head = df.head(max_rows).to_string()
+    except Exception:
+        # head() shouldn't fail on a valid DataFrame, but be defensive.
+        head = "(preview unavailable)"
+    n_cols = len(df.columns)
+    shown_cols = list(df.columns[:10])
+    cols_suffix = f" (+{n_cols - len(shown_cols)} more)" if n_cols > len(shown_cols) else ""
+    return (
+        f"DataFrame shape: {df.shape}\n"
+        f"Columns ({n_cols}): {list(df.columns)}\n"
+        f"Dtypes: {df.dtypes.to_dict()}\n\n"
+        f"First {min(max_rows, len(df))} rows:\n{head}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Persistence (ISSUES.md #1 — in-memory state)
 # ---------------------------------------------------------------------------
@@ -1008,7 +1053,15 @@ class DocumentAnalystAgent:
             elif file_extension in ('csv', 'xlsx', 'xls'):
                 df = self.load_structured_data(file_path)
                 result['data_frame'] = df
-                result['content'] = df.to_string()
+                # ISSUES.md #1: don't stringify the whole DataFrame.
+                # The full 100k-row to_string() output was persisted
+                # in document_content AND in the SQLite documents
+                # table (10 MB+), and never read by the Q&A path —
+                # Q&A uses `summary` + `analysis_results`, and the
+                # report generator truncates to 2000 chars. A bounded
+                # preview gives the report generator something to
+                # display while keeping state in single-digit KB.
+                result['content'] = _df_preview_string(df)
                 self.data_frames[file_name] = df
                 # Persist DataFrame as parquet so a recycled container
                 # can reload it without re-parsing the file.
