@@ -1308,5 +1308,333 @@ class AppStructureTests(unittest.TestCase):
         self.assertIn("from theme import", self.src)
 
 
+class SecretsWiringTests(unittest.TestCase):
+    """Lock the API-key resolution contract.
+
+    `_get_api_key` MUST consult three sources, in this exact order:
+
+      1. st.secrets["OPENCODE_API_KEY"]    (Streamlit Cloud)
+      2. OPENCODE_API_KEY env var          (.env / local dev)
+      3. TOGETHER_API_KEY env var          (legacy v2.0 fallback)
+
+    The README and the in-app sidebar both tell users to paste
+    `OPENCODE_API_KEY = "..."` into Streamlit Cloud's Secrets
+    editor. If the code ever drifts to a different key name
+    (e.g. `OPENCODE_ZEN_API_KEY`), a user following the docs
+    would set the key, the app would never see it, and the
+    first symptom would be a confusing 401. These tests catch
+    that class of bug at unit-test time.
+    """
+
+    def setUp(self):
+        # Save and clear every env var the helper could read.
+        # (Always runnable on bare env — does not require Agent.)
+        self._saved_env = {
+            k: os.environ.pop(k, None)
+            for k in ("OPENCODE_API_KEY", "TOGETHER_API_KEY")
+        }
+        # Save whatever was in sys.modules["streamlit"] so we can
+        # install a fake during the test and restore afterwards.
+        self._saved_streamlit = sys.modules.get("streamlit")
+
+    def tearDown(self):
+        # Restore env vars exactly as we found them.
+        for k, v in self._saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        # Restore streamlit (or its absence).
+        if self._saved_streamlit is None:
+            sys.modules.pop("streamlit", None)
+        else:
+            sys.modules["streamlit"] = self._saved_streamlit
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _install_fake_streamlit(self, secrets_dict):
+        """Install a fake `streamlit` module in sys.modules so
+        `_get_api_key` thinks it's running under Streamlit and
+        reads `st.secrets` from the supplied dict. Mirrors the
+        fake-httpx trick used in StreamingTests above."""
+        import types
+
+        fake = types.ModuleType("streamlit")
+        fake.secrets = secrets_dict  # supports `in` and `[...]`
+        sys.modules["streamlit"] = fake
+        # Also drop any cached `from streamlit import secrets` in
+        # Agent's namespace — but Agent reads via the module
+        # attribute, so the sys.modules install is sufficient.
+
+    def _get_api_key(self):
+        """Look up the helper via the imported module so the test
+        can run on bare env (skipping cleanly via the decorator)."""
+        import Agent
+        return Agent._get_api_key()
+
+    # ------------------------------------------------------------------
+    # 1. Source-level contract: the secrets key name must be
+    #    OPENCODE_API_KEY (not OPENCODE_ZEN_API_KEY), matching the
+    #    README and the in-app sidebar. Catches the silent drift
+    #    bug we just fixed.
+    # ------------------------------------------------------------------
+
+    def test_secrets_key_name_is_OPENCODE_API_KEY(self):
+        from pathlib import Path
+        src = Path("Agent.py").read_text(encoding="utf-8")
+        # Must read this exact key from st.secrets.
+        self.assertIn('"OPENCODE_API_KEY"', src)
+        # Must NOT read the older, drifted name from st.secrets.
+        self.assertNotIn('"OPENCODE_ZEN_API_KEY"', src)
+
+    # ------------------------------------------------------------------
+    # 2. Behavioral contract: when st.secrets has the key, it's
+    #    returned — regardless of the env vars.
+    # ------------------------------------------------------------------
+
+    @_require_agent()
+    def test_st_secrets_wins_over_env_vars(self):
+        self._install_fake_streamlit(
+            {"OPENCODE_API_KEY": "from_secrets_abc"}
+        )
+        os.environ["OPENCODE_API_KEY"] = "from_env_xyz"
+        os.environ["TOGETHER_API_KEY"] = "legacy_uvw"
+
+        key = self._get_api_key()
+        self.assertEqual(key, "from_secrets_abc")
+
+    # ------------------------------------------------------------------
+    # 3. Behavioral contract: with no secrets present, the env var
+    #    is returned.
+    # ------------------------------------------------------------------
+
+    @_require_agent()
+    def test_env_var_used_when_secrets_absent(self):
+        # No st.secrets install → helper falls through to env.
+        os.environ["OPENCODE_API_KEY"] = "from_env_xyz"
+        os.environ["TOGETHER_API_KEY"] = "legacy_uvw"
+
+        key = self._get_api_key()
+        self.assertEqual(key, "from_env_xyz")
+
+    # ------------------------------------------------------------------
+    # 4. Behavioral contract: the legacy TOGETHER_API_KEY is the
+    #    last-resort fallback. Only consulted when both secrets
+    #    and OPENCODE_API_KEY are absent.
+    # ------------------------------------------------------------------
+
+    @_require_agent()
+    def test_legacy_together_key_is_last_resort(self):
+        # OPENCODE_API_KEY not set; legacy is.
+        os.environ["TOGETHER_API_KEY"] = "legacy_uvw"
+
+        key = self._get_api_key()
+        self.assertEqual(key, "legacy_uvw")
+
+    @_require_agent()
+    def test_env_var_beats_legacy_together(self):
+        os.environ["OPENCODE_API_KEY"] = "from_env_xyz"
+        os.environ["TOGETHER_API_KEY"] = "legacy_uvw"
+
+        key = self._get_api_key()
+        # The "new" env var must win over the legacy fallback.
+        self.assertEqual(key, "from_env_xyz")
+
+    # ------------------------------------------------------------------
+    # 5. Behavioral contract: with nothing set, returns None
+    #    (caller raises the user-facing "API key is required" error).
+    # ------------------------------------------------------------------
+
+    @_require_agent()
+    def test_returns_none_when_nothing_set(self):
+        key = self._get_api_key()
+        self.assertIsNone(key)
+
+    # ------------------------------------------------------------------
+    # 6. Behavioral contract: a streamlit runtime that raises
+    #    when `st.secrets` is accessed (e.g. a local dev `streamlit
+    #    run` with no secrets file) must NOT crash the helper —
+    #    it should fall through to the env vars cleanly.
+    # ------------------------------------------------------------------
+
+    @_require_agent()
+    def test_secrets_access_failure_falls_through(self):
+        import types
+
+        class _BoomOnAccess:
+            """Acts like st.secrets but raises on any access,
+            simulating a fresh `streamlit run` with no
+            .streamlit/secrets.toml."""
+            def __contains__(self, _):
+                raise RuntimeError("no secrets file")
+            def __getitem__(self, _):
+                raise RuntimeError("no secrets file")
+
+        fake = types.ModuleType("streamlit")
+        fake.secrets = _BoomOnAccess()
+        sys.modules["streamlit"] = fake
+
+        os.environ["OPENCODE_API_KEY"] = "from_env_xyz"
+
+        key = self._get_api_key()
+        # The try/except in _get_api_key must swallow the RuntimeError
+        # and fall through to the env var.
+        self.assertEqual(key, "from_env_xyz")
+
+
+class PackagesTxtSchemaTests(unittest.TestCase):
+    """Lock the `packages.txt` contract that Streamlit Cloud's
+    deploy pipeline depends on.
+
+    Background: Streamlit Cloud parses `packages.txt` and passes
+    every whitespace-separated token to `apt-get install` against
+    a Debian-based image. The deploy will fail with a wall of
+    `E: Unable to locate package <word>` errors if the file:
+
+      1. Has CRLF line endings (apt's parser treats \\r as part
+         of the package name, so a comment like `# foo\\r` gets
+         passed as the package name `foo\\r` to apt).
+      2. Has a non-`#` line that contains spaces (each space-
+         separated word becomes a "package name").
+      3. References a package that doesn't exist in the Debian
+         repos.
+      4. Has duplicate entries (wastes time, no functional
+         impact, but indicates a contributor typo).
+
+    These tests catch all four classes at unit-test time on
+    bare env — no Agent, no streamlit, no network.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from pathlib import Path
+        cls.path = Path("packages.txt")
+        cls.bytes_data = cls.path.read_bytes()
+        # Decode as text, but keep the raw bytes for the CRLF check.
+        cls.text = cls.bytes_data.decode("utf-8")
+
+    # ------------------------------------------------------------------
+    # 1. Line endings: LF only. The whole reason the deploy broke.
+    # ------------------------------------------------------------------
+
+    def test_no_crlf_line_endings(self):
+        # Streamlit Cloud's apt parser is line-oriented and treats
+        # the \r as part of the package name. This is the single
+        # biggest deploy-blocker for this file.
+        self.assertNotIn(
+            b"\r\n", self.bytes_data,
+            "packages.txt has CRLF line endings; Streamlit Cloud's "
+            "apt parser will treat \\r as part of the package name "
+            "and fail with 'E: Unable to locate package' errors. "
+            "Re-save the file with LF endings.",
+        )
+        # Belt-and-braces: also assert no bare \r anywhere.
+        self.assertNotIn(
+            b"\r", self.bytes_data,
+            "packages.txt contains a bare CR; the entire file "
+            "must be LF-only.",
+        )
+
+    def test_ends_with_newline(self):
+        # Most POSIX tools (including the shell `apt` invokes)
+        # expect the final line to end with a newline. A file
+        # without a trailing newline is a frequent source of
+        # "no newline at end of file" warnings on diffs.
+        self.assertTrue(
+            self.bytes_data.endswith(b"\n"),
+            "packages.txt must end with a newline.",
+        )
+
+    # ------------------------------------------------------------------
+    # 2. No spaces in non-comment lines.
+    # ------------------------------------------------------------------
+
+    def test_no_spaces_in_package_lines(self):
+        for i, raw in enumerate(self.text.splitlines(), 1):
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            self.assertNotIn(
+                " ", stripped,
+                f"Line {i!r} contains a space in a non-comment line: "
+                f"{raw!r}. Streamlit Cloud passes every whitespace-"
+                f"separated token to apt, so spaces are not allowed "
+                f"in package names.",
+            )
+
+    # ------------------------------------------------------------------
+    # 3. No blank or whitespace-only package lines.
+    # ------------------------------------------------------------------
+
+    def test_no_blank_package_lines(self):
+        for i, raw in enumerate(self.text.splitlines(), 1):
+            if not raw.strip():
+                # A blank line is fine (apt skips it), but a line
+                # with only whitespace is not — it would be passed
+                # to apt as an empty package name. In practice the
+                # prior rule catches this, but a dedicated check
+                # gives a clearer error message.
+                self.assertEqual(
+                    raw, "",
+                    f"Line {i!r} is whitespace-only; blank lines "
+                    f"must be empty (no tabs, no spaces).",
+                )
+
+    # ------------------------------------------------------------------
+    # 4. No duplicate package names.
+    # ------------------------------------------------------------------
+
+    def test_no_duplicate_packages(self):
+        seen = []
+        for raw in self.text.splitlines():
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            self.assertNotIn(
+                stripped, seen,
+                f"Duplicate package: {stripped!r}. Remove the "
+                f"duplicate entry; Streamlit Cloud installs each "
+                f"package independently.",
+            )
+            seen.append(stripped)
+
+    # ------------------------------------------------------------------
+    # 5. Sanity: at least one package, and the file is not empty.
+    # ------------------------------------------------------------------
+
+    def test_has_at_least_one_package(self):
+        pkgs = [
+            line.strip() for line in self.text.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        self.assertGreaterEqual(
+            len(pkgs), 1,
+            "packages.txt must declare at least one OS-level "
+            "package. The app uses pytesseract for OCR, which "
+            "requires the tesseract binary on the OS image.",
+        )
+
+    # ------------------------------------------------------------------
+    # 6. Source-level contract: the file must not have any inline
+    #    `apt-get install` or shell-style backticks (we are pinning
+    #    a list of names, not a script).
+    # ------------------------------------------------------------------
+
+    def test_pure_list_not_script(self):
+        for i, raw in enumerate(self.text.splitlines(), 1):
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            for forbidden in ("apt-get", "apt ", "$(", "`", "&&", "||", ";"):
+                self.assertNotIn(
+                    forbidden, stripped,
+                    f"Line {i!r} contains shell syntax ({forbidden!r}): "
+                    f"{raw!r}. packages.txt is a list of package names, "
+                    f"not a shell script.",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

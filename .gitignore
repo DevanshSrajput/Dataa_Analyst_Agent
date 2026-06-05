@@ -64,3 +64,4 @@ visualizations_*/
 # *.docx
 .claude/
 ISSUES.md
+.env

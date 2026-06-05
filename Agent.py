@@ -13,9 +13,9 @@ the client is just a thin `requests` wrapper - no SDK lock-in.
 Environment variables (in priority order):
 
 
-    1. st.secrets["OPENCODE_ZEN_API_KEY"]   - Streamlit Cloud secrets
-    2. OPENCODE_ZEN_API_KEY env var        - .env file / system env
-    3. TOGETHER_API_KEY env var            - legacy, for back-compat
+    1. st.secrets["OPENCODE_API_KEY"]      - Streamlit Cloud secrets
+    2. OPENCODE_API_KEY env var             - .env file / system env
+    3. TOGETHER_API_KEY env var             - legacy, for back-compat
 
 If for privacy reasons you don't trust the app, use your own key.
 '''
@@ -108,15 +108,15 @@ DEFAULT_MODEL = "minimax-m3-free"
 def _get_api_key() -> Optional[str]:
     """
     Resolve the API key from, in order:
-      1. st.secrets["OPENCODE_ZEN_API_KEY"]  (Streamlit Cloud)
-      2. OPENCODE_ZEN_API_KEY env var
-      3. TOGETHER_API_KEY env var (legacy)
+      1. st.secrets["OPENCODE_API_KEY"]  (Streamlit Cloud)
+      2. OPENCODE_API_KEY env var  (.env / local dev)
+      3. TOGETHER_API_KEY env var  (legacy v2.0 fallback)
     """
     # 1. Streamlit secrets (works only when running under Streamlit)
     if _ST_AVAILABLE:
         try:
-            if "OPENCODE_ZEN_API_KEY" in st.secrets:
-                return st.secrets["OPENCODE_ZEN_API_KEY"]
+            if "OPENCODE_API_KEY" in st.secrets:
+                return st.secrets["OPENCODE_API_KEY"]
         except Exception:
             pass
     # 2. Environment
