@@ -810,8 +810,36 @@ def main() -> None:
         st.metric("💬 Conversations", len(agent.conversation_history))
 
         if st.button("🔄 Reset Session", type="secondary", use_container_width=True):
+            # Wipe the per-agent caches (in-memory + on-disk SQLite)
+            # BEFORE we start touching session_state. If we did it
+            # in the other order, a stale agent reference could be
+            # used by the next render before the DB was cleared.
+            try:
+                agent.clear_caches()
+                agent.clear_visualizations()
+            except Exception:
+                # Even if the agent is in a bad state, the reset must
+                # still complete — never let cleanup errors block a
+                # user's "start over" action.
+                pass
+
+            # Pop every key one at a time. Using .pop(..., None) is
+            # safe across Streamlit versions: it never raises on a
+            # missing key and never mutates the dict while iterating
+            # it (we capture keys into a list first, like the
+            # original code did, but pop is the documented public
+            # API for session_state and tolerates the rare race
+            # where Streamlit adds a key between snapshot and pop).
             for key in list(st.session_state.keys()):
-                del st.session_state[key]
+                st.session_state.pop(key, None)
+
+            # Drop Streamlit's own caches so any @st.cache_data
+            # resources tied to the old session are released.
+            try:
+                st.cache_data.clear()
+            except Exception:
+                pass
+
             st.success("✅ Session reset!")
             st.rerun()
 

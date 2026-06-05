@@ -215,7 +215,7 @@ If `streamlit` is on your `PATH` you can also do `python -m streamlit run app.py
 
 ## 🧪 Running the Tests
 
-The repo ships with a 32-test suite under `tests/` that covers extraction
+The repo ships with a 35-test suite under `tests/` that covers extraction
 failures, BM25 retrieval, the SSRF policy, the path-traversal-safe
 filename helper, and the extension allowlist. Run it with either:
 
@@ -257,7 +257,7 @@ Dataa_Analyst_Agent/
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py     # Shared fixtures (works under pytest OR unittest)
-│   └── test_agent.py   # 32 tests covering extraction, retrieval, SSRF, persistence
+│   └── test_agent.py   # 35 tests covering extraction, retrieval, SSRF, persistence, reset path
 └── venv/               # Local virtualenv (not committed)
 ```
 
@@ -521,7 +521,7 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 <details>
 <summary><h3 style="display:inline">Test coverage</h3></summary>
 
-- **32 tests** in `tests/test_agent.py` (zero new dependencies; runs
+- **35 tests** in `tests/test_agent.py` (zero new dependencies; runs
   under stdlib `unittest` or `pytest`).
 - Coverage: extension detection + allowlist, `_safe_filename` for
   path-traversal safety, `process_document` happy + failure paths,
@@ -538,7 +538,7 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 - `app.py` — Streamlit UI (the entrypoint for `streamlit run`).
 - `Agent.py` — engine: extractors, BM25 retriever, OpenCode Zen
   client, `safe_fetch_url` SSRF chokepoint.
-- `tests/` — 32 tests + shared fixtures (`conftest.py`).
+- `tests/` — 35 tests + shared fixtures (`conftest.py`).
 - `pyproject.toml` — `[tool.pytest.ini_options]` for the test suite.
 - `ISSUES.md` — personal-tracked audit; updated as each fix lands.
 - `.streamlit/config.toml` — Cloud-friendly defaults (port 8501, headless).
@@ -555,10 +555,13 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 5. **Blind [:4000] truncation** → BM25 retrieval over pre-chunked text
 6. **`visualizations_*` dirs in CWD** → in-memory bytes + `tempfile.gettempdir()`
 7. **Hardcoded extension list** → `Agent._SUPPORTED_EXTENSIONS` (single source of truth)
-8. **No tests** → 32-test suite under `tests/`
+8. **No tests** → 35-test suite under `tests/`
 9. **In-memory state lost on container recycle** → SQLite store under
    `tempfile.gettempdir()`, hydrated on init, write-through on every
    mutation. No new deps.
+10. **`del st.session_state[key]` mid-iteration in Reset Session** →
+    `st.session_state.pop(key, None)` plus `agent.clear_caches()` +
+    `agent.clear_visualizations()` so the on-disk store is wiped too.
 
 </details>
 
