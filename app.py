@@ -247,18 +247,17 @@ def main() -> None:
     _inject_css(st.session_state.theme_mode)
 
     # --- header ---
+    # SECURITY (ISSUES.md #1): the only interpolated values are
+    # `theme_indicator` (a hard-coded emoji literal) and
+    # `theme_mode.title()` (constrained to "Dark" or "Light"), but we
+    # still avoid unsafe_allow_html and let the CSS `.main-header` class
+    # style the markdown. Streamlit sanitizes by default.
     theme_indicator = "🌙" if st.session_state.theme_mode == "dark" else "☀️"
     st.markdown(
-        f"""
-        <div class="main-header">
-            <h1>🤖 AI Document Analyst {theme_indicator}</h1>
-            <p style="font-size: 1.2em; margin: 0;">Transform your documents into actionable insights with AI</p>
-            <p style="opacity: 0.9; margin: 0.5rem 0 0 0;">
-                Built by Devansh Singh | Powered by OpenCode Zen | {st.session_state.theme_mode.title()} Mode
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+        f"# 🤖 AI Document Analyst {theme_indicator}\n\n"
+        f"_Transform your documents into actionable insights with AI_  \n"
+        f"Built by Devansh Singh · Powered by OpenCode Zen · "
+        f"{st.session_state.theme_mode.title()} Mode",
     )
 
     # --- agent init ---
@@ -378,15 +377,10 @@ def main() -> None:
                 ("⚡ Real-time Processing", "Fast document processing with live progress."),
             ]
             for title, desc in features:
-                st.markdown(
-                    f"""
-                    <div class="feature-card">
-                        <h4>{title}</h4>
-                        <p>{desc}</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                # SECURITY (ISSUES.md #1): developer-controlled strings,
+                # but rendered without unsafe_allow_html so any future
+                # change to the list can't introduce HTML injection.
+                st.markdown(f"### {title}\n\n{desc}")
         with col2:
             st.markdown("### 🚀 Quick Start")
             st.markdown(
@@ -543,15 +537,12 @@ def main() -> None:
             progress_bar.empty()
             status_text.empty()
         else:
+            # SECURITY (ISSUES.md #1): no interpolation, no need for
+            # unsafe_allow_html. Streamlit sanitizes by default.
             st.markdown(
-                """
-                <div class="upload-zone">
-                    <h3>📁 Drop your documents here!</h3>
-                    <p>Supported formats: PDF, DOCX, TXT, CSV, Excel, Images</p>
-                    <p>Use the file uploader above to get started ⬆️</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
+                "### 📁 Drop your documents here!\n\n"
+                "Supported formats: PDF, DOCX, TXT, CSV, Excel, Images\n\n"
+                "Use the file uploader above to get started ⬆️"
             )
 
     # ---- TAB 3: CHAT ----
@@ -586,16 +577,15 @@ def main() -> None:
                 with st.spinner("🤖 AI is thinking..."):
                     try:
                         answer = agent.answer_question(user_question)
+                        # SECURITY (ISSUES.md #1): never interpolate LLM
+                        # output or user input into raw HTML. st.chat_message
+                        # renders the text with markdown sanitization on, and
+                        # avoids the unsafe_allow_html sink entirely.
                         st.markdown("### 💡 AI Response:")
-                        st.markdown(
-                            f"""
-                            <div class="chat-container">
-                                <p><strong>❓ Your Question:</strong> {user_question}</p>
-                                <p><strong>🤖 AI Answer:</strong> {answer}</p>
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
+                        with st.chat_message("user"):
+                            st.markdown(user_question)
+                        with st.chat_message("assistant"):
+                            st.markdown(answer)
                     except Exception as e:
                         st.error(f"❌ Error getting answer: {str(e)}")
             elif ask_button:

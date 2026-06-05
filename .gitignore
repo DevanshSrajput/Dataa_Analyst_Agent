@@ -63,3 +63,4 @@ visualizations_*/
 # *.pdf
 # *.docx
 .claude/
+ISSUES.md
