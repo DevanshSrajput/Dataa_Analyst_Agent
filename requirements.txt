@@ -1,6 +1,6 @@
 # Core data stack
 numpy
-pandas
+pandas==2.2.3
 matplotlib
 seaborn
 

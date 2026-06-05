@@ -11,6 +11,8 @@ auth header, and request shape follow the OpenAI chat-completions spec, so
 the client is just a thin `requests` wrapper - no SDK lock-in.
 
 Environment variables (in priority order):
+
+
     1. st.secrets["OPENCODE_ZEN_API_KEY"]   - Streamlit Cloud secrets
     2. OPENCODE_ZEN_API_KEY env var        - .env file / system env
     3. TOGETHER_API_KEY env var            - legacy, for back-compat

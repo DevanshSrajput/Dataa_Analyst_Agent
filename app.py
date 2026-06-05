@@ -13,11 +13,42 @@ Deployment notes (Streamlit Cloud):
 '''
 
 import os
+import re
 import sys
 import time
+import uuid
 
 # Mark this process as a Streamlit run so Agent.py stays quiet.
 os.environ["STREAMLIT_RUN"] = "1"
+
+# ---------------------------------------------------------------------------
+# Upload path safety (ISSUES.md #2)
+# ---------------------------------------------------------------------------
+# The original Agent.py used `temp_<uploaded_file.name>` as a relative path,
+# which is a path-traversal sink on Streamlit Cloud (CWD is the repo root).
+# `werkzeug.utils.secure_filename` is the canonical fix, but werkzeug is not
+# in our dependency tree, so we replicate its behavior with a strict
+# allowlist + basename. The on-disk path is also keyed on a UUID and lives
+# in a dedicated directory, so the user's filename never appears in the
+# filesystem path at all.
+_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_TEMP_UPLOAD_DIR = "temp_uploads"
+
+
+def _safe_filename(name: str) -> str:
+    """Return a filesystem-safe basename derived from `name`.
+
+    Strips directory components, replaces any non `[A-Za-z0-9._-]` run with
+    a single underscore, and falls back to a UUID if the result is empty.
+    This mirrors werkzeug's `secure_filename` semantics without adding a
+    dependency.
+    """
+    # 1. Drop any path components (handles `..`, `/`, `\\`).
+    base = os.path.basename(name)
+    # 2. Replace every unsafe run with a single underscore.
+    cleaned = _SAFE_FILENAME_RE.sub("_", base).strip("._-")
+    # 3. Empty result (e.g. name was all metacharacters) -> random fallback.
+    return cleaned or uuid.uuid4().hex
 
 import streamlit as st
 
@@ -417,8 +448,21 @@ def main() -> None:
 
                 status_text.text(f"🔄 Processing {uploaded_file.name}...")
 
-                # Persist a temp file the extractors can read from a path
-                temp_path = f"temp_{uploaded_file.name}"
+                # Persist a temp file the extractors can read from a path.
+                # SECURITY (ISSUES.md #2): the on-disk path must not be
+                # derived from the user-controlled filename. We write to
+                # `temp_uploads/<uuid>.<safe_ext>` so path-traversal
+                # payloads in the original name can never escape the
+                # uploads directory. The agent still receives the user's
+                # original name for display and dict-keying.
+                safe_name = _safe_filename(uploaded_file.name)
+                # Preserve a single dot-extension if the original had one.
+                _, orig_ext = os.path.splitext(uploaded_file.name)
+                safe_ext = _SAFE_FILENAME_RE.sub("", orig_ext)[:10]
+                upload_dir = _TEMP_UPLOAD_DIR
+                os.makedirs(upload_dir, exist_ok=True)
+                temp_filename = f"{uuid.uuid4().hex}{('.' + safe_ext) if safe_ext else ''}"
+                temp_path = os.path.join(upload_dir, temp_filename)
                 with open(temp_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
 
@@ -482,6 +526,10 @@ def main() -> None:
                 except Exception as e:
                     st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
                 finally:
+                    # SECURITY (ISSUES.md #2): clean up the UUID-keyed
+                    # temp file we just wrote. Resolved against
+                    # `temp_path` (which is now inside temp_uploads/), so
+                    # this can never reach outside the uploads directory.
                     if os.path.exists(temp_path):
                         try:
                             os.remove(temp_path)
