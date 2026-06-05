@@ -579,5 +579,248 @@ class ResetSessionSourceTests(unittest.TestCase):
             )
 
 
+# ---------------------------------------------------------------------------
+# ISSUES.md #1 (🔵) — token-by-token streaming.
+#
+# We don't hit the network. Instead we install a fake httpx module
+# into sys.modules with a minimal AsyncClient that yields SSE lines
+# we control. The fake is restored in tearDown so other tests (and
+# the import chain) keep using the real httpx if it's installed.
+# ---------------------------------------------------------------------------
+
+@_require_agent()
+class StreamingTests(unittest.TestCase):
+    """Validate _stream_chat_completion + stream_answer end-to-end
+    with a fake SSE source. No real network calls."""
+
+    def setUp(self):
+        # Skip if httpx isn't installed — streaming is opt-in.
+        try:
+            import httpx  # noqa: F401
+        except ImportError:
+            self.skipTest("httpx not installed")
+
+        self._saved_httpx = sys.modules.get("httpx")
+
+    def tearDown(self):
+        # Restore whatever was in sys.modules (real httpx or None).
+        if self._saved_httpx is None:
+            sys.modules.pop("httpx", None)
+        else:
+            sys.modules["httpx"] = self._saved_httpx
+
+    def _install_fake_httpx(self, sse_lines, status_code=200, body=None):
+        """Replace sys.modules["httpx"] with a fake whose AsyncClient
+        yields the supplied SSE lines (or a non-2xx response)."""
+        import asyncio
+        import types
+
+        sse_iter = iter(sse_lines)
+
+        class _FakeStreamResp:
+            def __init__(self, status):
+                self.status_code = status
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def aiter_lines(self):
+                for line in sse_iter:
+                    yield line
+
+            async def aread(self):
+                # For non-2xx the helper reads the body to extract an
+                # error message. Return a JSON-decodable object so the
+                # .json() call inside _stream_chat_completion works.
+                if body is None:
+                    return b'{"error": {"message": "synthetic failure"}}'
+                return body
+
+        class _FakeStreamCtx:
+            def __init__(self, *a, **kw):
+                self._resp = _FakeStreamResp(status_code)
+
+            async def __aenter__(self):
+                return self._resp
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class _FakeClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            def stream(self, *a, **kw):
+                return _FakeStreamCtx()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class _Timeout:
+            def __init__(self, *a, **kw):
+                pass
+
+        fake = types.ModuleType("httpx")
+        fake.AsyncClient = _FakeClient  # type: ignore[attr-defined]
+        fake.Timeout = _Timeout  # type: ignore[attr-defined]
+        sys.modules["httpx"] = fake
+
+        # _stream_chat_completion captures httpx at call time via
+        # _httpx() — that helper does `import httpx` which will hit
+        # sys.modules, so we're good.
+
+    def test_sse_chunks_preserved_and_concatenated(self):
+        """A 3-token SSE stream must yield 3 chunks in order and the
+        full text must equal their concatenation."""
+        sse = [
+            'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+            "",
+            'data: {"choices":[{"delta":{"content":", "}}]}',
+            "",
+            'data: {"choices":[{"delta":{"content":"world"}}]}',
+            "",
+            "data: [DONE]",
+            "",
+        ]
+        self._install_fake_httpx(sse)
+
+        import asyncio
+        pieces = []
+        async def _collect():
+            async for p in Agent._stream_chat_completion(
+                api_key="k", model="m", messages=[{"role": "user", "content": "hi"}]
+            ):
+                pieces.append(p)
+        asyncio.run(_collect())
+        self.assertEqual(pieces, ["Hello", ", ", "world"])
+        self.assertEqual("".join(pieces), "Hello, world")
+
+    def test_done_terminates_stream(self):
+        """[DONE] must stop the generator without raising."""
+        sse = ['data: {"choices":[{"delta":{"content":"x"}}]}', "", "data: [DONE]"]
+        self._install_fake_httpx(sse)
+        import asyncio
+        pieces = []
+        async def _collect():
+            async for p in Agent._stream_chat_completion(
+                api_key="k", model="m", messages=[]
+            ):
+                pieces.append(p)
+        asyncio.run(_collect())
+        self.assertEqual(pieces, ["x"])
+
+    def test_non_2xx_raises_runtime_error(self):
+        """A 500 from the backend must surface as RuntimeError, not
+        silently yield nothing."""
+        self._install_fake_httpx([], status_code=500)
+        import asyncio
+        async def _collect():
+            async for _ in Agent._stream_chat_completion(
+                api_key="k", model="m", messages=[]
+            ):
+                pass
+        with self.assertRaises(RuntimeError) as cm:
+            asyncio.run(_collect())
+        self.assertIn("HTTP 500", str(cm.exception))
+
+    def test_collect_stream_drains_and_joins(self):
+        """The sync wrapper used by stream_answer must concatenate
+        every piece into a single string."""
+        sse = [
+            'data: {"choices":[{"delta":{"content":"A"}}]}',
+            'data: {"choices":[{"delta":{"content":"B"}}]}',
+            'data: {"choices":[{"delta":{"content":"C"}}]}',
+            "data: [DONE]",
+        ]
+        self._install_fake_httpx(sse)
+        import asyncio
+        async def _run():
+            return Agent._collect_stream(Agent._stream_chat_completion(
+                api_key="k", model="m", messages=[]
+            ))
+        text = asyncio.run(_run())
+        self.assertEqual(text, "ABC")
+
+    def test_stream_answer_persists_full_text(self):
+        """stream_answer must record the concatenated answer in
+        conversation_history and the on-disk store when the stream
+        is fully drained, matching answer_question's side effects."""
+        import csv
+        with tempfile.TemporaryDirectory(prefix="dsstream-") as tmp:
+            db = os.path.join(tmp, "s.db")
+            csv_path = os.path.join(tmp, "p.csv")
+            with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(["name", "score"])
+                w.writerow(["Alice", 10])
+                w.writerow(["Bob", 20])
+            agent = Agent.DocumentAnalystAgent(
+                api_key="k", model="m", db_path=db,
+            )
+            try:
+                with mock.patch.object(agent, "_make_api_call_with_retry",
+                                       return_value="[stub]"):
+                    agent.process_document(csv_path, "p.csv")
+
+                sse = [
+                    'data: {"choices":[{"delta":{"content":"Based on "}}]}',
+                    'data: {"choices":[{"delta":{"content":"the data, "}}]}',
+                    'data: {"choices":[{"delta":{"content":"Alice scored 10."}}]}',
+                    "data: [DONE]",
+                ]
+                self._install_fake_httpx(sse)
+                chunks = list(agent.stream_answer("who scored what?"))
+                self.assertEqual(
+                    "".join(chunks),
+                    "Based on the data, Alice scored 10.",
+                )
+                # Persisted exactly once, with the concatenated text.
+                self.assertEqual(len(agent.conversation_history), 1)
+                self.assertEqual(
+                    agent.conversation_history[0]["answer"],
+                    "Based on the data, Alice scored 10.",
+                )
+                self.assertEqual(
+                    agent.conversation_history[0]["question"],
+                    "who scored what?",
+                )
+            finally:
+                agent.close()
+
+    def test_stream_answer_surfaces_error(self):
+        """A 500 from the backend must yield an `API Error: ...`
+        chunk, not silently return empty text."""
+        import csv
+        with tempfile.TemporaryDirectory(prefix="dsstream-") as tmp:
+            db = os.path.join(tmp, "s.db")
+            csv_path = os.path.join(tmp, "p.csv")
+            with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(["name", "score"])
+                w.writerow(["Alice", 10])
+            agent = Agent.DocumentAnalystAgent(
+                api_key="k", model="m", db_path=db,
+            )
+            try:
+                with mock.patch.object(agent, "_make_api_call_with_retry",
+                                       return_value="[stub]"):
+                    agent.process_document(csv_path, "p.csv")
+                self._install_fake_httpx([], status_code=500)
+                chunks = list(agent.stream_answer("anything?"))
+                self.assertTrue(chunks, "expected at least one chunk")
+                self.assertTrue(
+                    any("API Error" in c or "HTTP 500" in c for c in chunks),
+                    f"expected an error chunk, got {chunks!r}",
+                )
+            finally:
+                agent.close()
+
+
 if __name__ == "__main__":
     unittest.main()

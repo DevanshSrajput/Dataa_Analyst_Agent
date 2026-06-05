@@ -604,18 +604,27 @@ def main() -> None:
                 )
 
             if ask_button and user_question.strip():
-                with st.spinner("🤖 AI is thinking..."):
+                # SECURITY (ISSUES.md #1): never interpolate LLM
+                # output or user input into raw HTML. st.chat_message
+                # renders the text with markdown sanitization on, and
+                # avoids the unsafe_allow_html sink entirely.
+                # UX (ISSUES.md #1 — streaming): render the user turn
+                # first so the exchange is visible, then stream the
+                # assistant turn token-by-token via st.write_stream.
+                with st.chat_message("user"):
+                    st.markdown(user_question)
+                with st.chat_message("assistant"):
                     try:
-                        answer = agent.answer_question(user_question)
-                        # SECURITY (ISSUES.md #1): never interpolate LLM
-                        # output or user input into raw HTML. st.chat_message
-                        # renders the text with markdown sanitization on, and
-                        # avoids the unsafe_allow_html sink entirely.
-                        st.markdown("### 💡 AI Response:")
-                        with st.chat_message("user"):
-                            st.markdown(user_question)
-                        with st.chat_message("assistant"):
-                            st.markdown(answer)
+                        # UX (ISSUES.md #1 — streaming): hand the
+                        # generator straight to st.write_stream, which
+                        # keeps the assistant bubble in a "thinking"
+                        # state until the first token arrives and then
+                        # appends each chunk in place. Persistence to
+                        # conversation_history happens inside
+                        # stream_answer when the generator is fully
+                        # drained, so the side-effect ordering matches
+                        # answer_question exactly.
+                        st.write_stream(agent.stream_answer(user_question))
                     except Exception as e:
                         st.error(f"❌ Error getting answer: {str(e)}")
             elif ask_button:
@@ -637,26 +646,25 @@ def main() -> None:
                         if i < len(quick_questions):
                             title, question = quick_questions[i]
                             if st.button(title, key=f"quick_{i}", use_container_width=True):
-                                with st.spinner("🤖 Analyzing..."):
-                                    try:
-                                        answer = agent.answer_question(question)
-                                        st.success("💡 **Answer:**")
-                                        st.write(answer)
-                                    except Exception as e:
-                                        st.error(f"❌ Error: {str(e)}")
+                                try:
+                                    # Streaming: same path as the main
+                                    # chat input. write_stream handles
+                                    # the "thinking" state for us.
+                                    st.markdown(f"**💡 {title}:**")
+                                    st.write_stream(agent.stream_answer(question))
+                                except Exception as e:
+                                    st.error(f"❌ Error: {str(e)}")
                     with c2:
                         if i + 1 < len(quick_questions):
                             title, question = quick_questions[i + 1]
                             if st.button(
                                 title, key=f"quick_{i + 1}", use_container_width=True
                             ):
-                                with st.spinner("🤖 Analyzing..."):
-                                    try:
-                                        answer = agent.answer_question(question)
-                                        st.success("💡 **Answer:**")
-                                        st.write(answer)
-                                    except Exception as e:
-                                        st.error(f"❌ Error: {str(e)}")
+                                try:
+                                    st.markdown(f"**💡 {title}:**")
+                                    st.write_stream(agent.stream_answer(question))
+                                except Exception as e:
+                                    st.error(f"❌ Error: {str(e)}")
 
             if agent.conversation_history:
                 st.markdown("### 💭 Recent Conversations")

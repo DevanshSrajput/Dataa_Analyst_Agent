@@ -4,7 +4,7 @@ Findings from a fresh read of the current `Agent.py` and `app.py`. The
 original audit (35 items, kept in git history) has been reduced to the
 issues that are still open. Resolved items have been removed.
 
-Open at last edit: 5 items (0 🔴, 0 🟠, 0 🟡, 3 🔵, 2 ⚪).
+Open at last edit: 4 items (0 🔴, 0 🟠, 0 🟡, 2 🔵, 2 ⚪).
 
 > **Legend**
 > 🔴 Security · 🟠 Correctness / data loss · 🟡 Reliability / robustness · 🔵 Performance / scaling · ⚪ Style / maintainability
@@ -103,15 +103,7 @@ locks.)*
 
 ## 🔵 Performance / scaling
 
-### 1. Synchronous HTTP from Streamlit — `Agent.py:144`
-- **Issue:** a 1k-token completion takes 1–3 s synchronously. No
-  streaming, no async. Streamlit reruns the whole script on every
-  widget interaction, so the perceived latency compounds.
-- **Fix:** switch to `httpx.AsyncClient` and `st.write_stream` for
-  token-by-token rendering of chat responses.
-- **Skill:** async, streaming.
-
-### 2. `create_visualizations` always renders 4 charts — `Agent.py:332-415`
+### 1. `create_visualizations` always renders 4 charts — `Agent.py:332-415`
 - **Issue:** a 3-row CSV gets the full treatment including a
   correlation heatmap with a 1×1 matrix that seaborn happily renders
   and annotates. `numeric_columns` may also exceed 4 — only the first
@@ -120,7 +112,7 @@ locks.)*
   when truncating columns.
 - **Skill:** matplotlib, defensive UI.
 
-### 3. `df.to_string()` is stored in agent state — `Agent.py:277`
+### 2. `df.to_string()` is stored in agent state — `Agent.py:277`
 - **Issue:** a 100k-row CSV is converted to a 10 MB+ string and stored
   in `document_content`, then truncated to 1500 chars at Q&A time. The
   truncation hides the loss, but the memory cost is paid up front.
@@ -133,14 +125,14 @@ locks.)*
 
 ## ⚪ Style / maintainability
 
-### 4. `app.py` mixes UI, theming, business logic, and helpers
+### 3. `app.py` mixes UI, theming, business logic, and helpers
 - The 50-line CSS block (`DARK_CSS`, `LIGHT_CSS`) could live in a
   `theme.py` or in `static/`. The `_safe_filename` helper and
   `AVAILABLE_MODELS` dict could move to `app_helpers.py`. `app.py`
   would shrink to pure UI orchestration.
 - **Skill:** refactoring, separation of concerns.
 
-### 5. Model catalogue is hard-coded and partially fictional
+### 4. Model catalogue is hard-coded and partially fictional
 - `AVAILABLE_MODELS` in `app.py:66-127` lists `mimo-v2.5-free`,
   `qwen3.6-plus-free`, `deepseek-v4-flash-free`, `nemotron-3-ultra-free`,
   `gemini-3.1-pro`, `gpt-5`, `claude-sonnet-4-6`, `minimax-m2.7` —
@@ -156,11 +148,10 @@ locks.)*
 
 | # | Severity | Area | One-liner |
 |---|---|---|---|
-| 1 | 🔵 | UX | No streaming; every rerun re-pays latency |
-| 2 | 🔵 | Noise | Charts always render, even for 3-row data |
-| 3 | 🔵 | Memory | `df.to_string()` stored in agent state |
-| 4 | ⚪ | Structure | `app.py` still mixes UI + theming + helpers |
-| 5 | ⚪ | Data | Model catalogue may include fictional entries |
+| 1 | 🔵 | Noise | Charts always render, even for 3-row data |
+| 2 | 🔵 | Memory | `df.to_string()` stored in agent state |
+| 3 | ⚪ | Structure | `app.py` still mixes UI + theming + helpers |
+| 4 | ⚪ | Data | Model catalogue may include fictional entries |
 
 ---
 

@@ -12,6 +12,11 @@ pytesseract
 
 # HTTP client (replaces the `together` SDK)
 requests
+# Async HTTP for token-by-token streaming of chat completions
+# (ISSUES.md #1 — sync HTTP, no token-by-token feedback). Used
+# lazily: Agent.py still imports without httpx; only the streaming
+# code path needs it.
+httpx
 
 # Streamlit (UI)
 streamlit

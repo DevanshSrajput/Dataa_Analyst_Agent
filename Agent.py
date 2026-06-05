@@ -335,6 +335,116 @@ def _chat_complete(
 
 
 # ---------------------------------------------------------------------------
+# Streaming chat (ISSUES.md #1 — sync HTTP, no token-by-token feedback)
+# ---------------------------------------------------------------------------
+# httpx is the only NEW runtime dep for streaming. We lazy-import it
+# so Agent.py still loads on machines that only have the synchronous
+# stack. The stream API follows OpenAI's chat-completions SSE shape:
+# each line is `data: {...}` and a final `data: [DONE]`. Each
+# `choices[0].delta.content` is a partial token string.
+def _httpx():
+    """Lazy import: keeps Agent.py importable without httpx installed."""
+    try:
+        import httpx  # type: ignore
+    except ImportError as e:  # pragma: no cover - guarded by callers
+        raise RuntimeError(
+            "httpx is required for streaming chat completions. "
+            "Install it with: pip install httpx"
+        ) from e
+    return httpx
+
+
+async def _stream_chat_completion(
+    api_key: str,
+    model: str,
+    messages: List[Dict[str, str]],
+    max_tokens: int = 1000,
+    temperature: float = 0.3,
+    timeout: float = 60.0,
+) -> "Any":  # async generator[Optional[str]]
+    """Async generator that yields token strings from OpenCode Zen.
+
+    Yields the `delta.content` of each SSE chunk. On a clean stop the
+    generator returns (StopIteration). HTTP / parse errors propagate
+    to the caller so the retry layer can react.
+    """
+    httpx = _httpx()
+    url = f"{ZEN_BASE_URL}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": True,
+    }
+    timeout_obj = httpx.Timeout(timeout, connect=10.0)
+    async with httpx.AsyncClient(timeout=timeout_obj) as client:
+        async with client.stream("POST", url, headers=headers, json=payload) as resp:
+            if resp.status_code >= 400:
+                # Read the buffered body so the error message is useful.
+                body = await resp.aread()
+                try:
+                    err = body.json()
+                    msg = (
+                        err.get("error", {}).get("message")
+                        or err.get("message")
+                        or body.text
+                    )
+                except Exception:
+                    msg = body.text.decode("utf-8", errors="replace")
+                raise RuntimeError(f"HTTP {resp.status_code}: {msg}")
+
+            import json
+            async for line in resp.aiter_lines():
+                if not line:
+                    continue
+                # SSE frames start with "data: ". Skip comments / heartbeats.
+                if line.startswith(":"):
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                payload_str = line[len("data:"):].strip()
+                if payload_str == "[DONE]":
+                    return
+                try:
+                    chunk = json.loads(payload_str)
+                except json.JSONDecodeError:
+                    # Some proxies inject keepalive garbage; skip quietly.
+                    continue
+                try:
+                    choice = chunk["choices"][0]
+                    delta = choice.get("delta", {})
+                    piece = delta.get("content")
+                except (KeyError, IndexError, TypeError):
+                    piece = None
+                if piece:
+                    yield piece
+
+
+def _collect_stream(gen) -> str:
+    """Drain an async generator and return the concatenated text.
+
+    The retry loop wraps this so a failed stream can be re-attempted
+    with exponential backoff (mirroring `_make_api_call_with_retry`).
+    """
+    import asyncio
+    out: List[str] = []
+
+    async def _run() -> None:
+        async for piece in gen:
+            if piece:
+                out.append(piece)
+
+    asyncio.run(_run())
+    return "".join(out)
+
+
+# ---------------------------------------------------------------------------
 # Retrieval helpers (ISSUES.md #1 — lossy context)
 # ---------------------------------------------------------------------------
 # Pure-stdlib BM25-lite ranker and a paragraph-aware chunker. We don't
@@ -1152,9 +1262,18 @@ class DocumentAnalystAgent:
     # + the model's own reply inside the typical 4k-8k response window.
     _CONTEXT_BUDGET_CHARS = 12_000
 
-    def answer_question(self, question: str, context_files: Optional[List[str]] = None) -> str:
-        """
-        Answer a question based on the processed documents.
+    def _build_answer_prompt(
+        self,
+        question: str,
+        context_files: Optional[List[str]] = None,
+    ) -> str:
+        """Assemble the chat-completions prompt for a Q&A turn.
+
+        Shared by `answer_question` (sync, returns the full text) and
+        `stream_answer` (sync wrapper around an async SSE stream, yields
+        token chunks). Keeping prompt construction in one place means
+        a streamed answer and a non-streamed answer see the same
+        model input.
 
         Context construction (ISSUES.md #1 — lossy context):
         - For each text-bearing file (PDF/DOCX/TXT/images), the
@@ -1170,83 +1289,90 @@ class DocumentAnalystAgent:
           (gracefully — never silently drop the first chunks, which
           are the most relevant).
         """
+        context = ""
+
+        if context_files is None:
+            context_files = list(self.document_content.keys())
+
+        query_tokens = _tokenize(question)
+
+        for file_name in context_files:
+            if file_name not in self.document_content:
+                continue
+            doc_info = self.document_content[file_name]
+            context += f"\n--- {file_name} ---\n"
+            context += f"File Type: {doc_info['file_type']}\n"
+            context += f"Summary: {doc_info['summary']}\n"
+
+            # Text-bearing file: BM25 over pre-chunked text.
+            chunks = self._chunks.get(file_name)
+            if chunks:
+                if query_tokens:
+                    # Pre-tokenize each chunk once and score.
+                    tokenized = [_tokenize(c) for c in chunks]
+                    scores = _bm25_scores(query_tokens, tokenized)
+                    # Take the top-k by score, but preserve the
+                    # original chunk order so the model sees
+                    # document-coherent prose (not a shuffled salad).
+                    ranked = sorted(
+                        enumerate(scores), key=lambda x: x[1], reverse=True
+                    )[: self._CHUNKS_PER_DOC]
+                    ranked.sort(key=lambda x: x[0])  # back to doc order
+                    context += "Relevant excerpts (BM25-ranked):\n"
+                    for idx, _score in ranked:
+                        context += f"[chunk {idx}]\n{chunks[idx]}\n\n"
+                else:
+                    # Question is empty / pure stopwords — fall back
+                    # to the first few chunks so the model still
+                    # has *some* context.
+                    context += "Content (first chunks):\n"
+                    for c in chunks[: self._CHUNKS_PER_DOC]:
+                        context += f"{c}\n\n"
+
+            # Structured data: keep the analysis summary.
+            if file_name in self.analysis_results:
+                analysis = self.analysis_results[file_name]
+                context += "Data Analysis Summary:\n"
+                context += f"Shape: {analysis['basic_info']['shape']}\n"
+                context += f"Columns: {analysis['basic_info']['columns']}\n"
+                if analysis['summary_statistics']:
+                    context += (
+                        f"Key Statistics Available: "
+                        f"{list(analysis['summary_statistics'].keys())}\n"
+                    )
+
+        # Truncate the assembled context to the budget. We chop the
+        # tail (last file's chunks) rather than the head because
+        # the most-relevant chunks were the *first* ones we
+        # selected per file.
+        if len(context) > self._CONTEXT_BUDGET_CHARS:
+            context = context[: self._CONTEXT_BUDGET_CHARS] + "\n[...truncated for context budget...]"
+
+        return f"""
+        You are an intelligent data analyst. Based on the following document(s) and analysis, please answer the user's question accurately and comprehensively.
+
+        CONTEXT FROM DOCUMENTS:
+        {context}
+
+        CONVERSATION HISTORY:
+        {self._format_conversation_history()}
+
+        USER QUESTION: {question}
+
+        Please provide a detailed answer based on the available data and documents. If the question involves specific data analysis, calculations, or comparisons, please be precise and cite relevant statistics or findings from the documents.
+
+        If you cannot answer the question based on the available information, please explain what additional information would be needed.
+        """
+
+    def answer_question(self, question: str, context_files: Optional[List[str]] = None) -> str:
+        """Answer a question based on the processed documents.
+
+        See `_build_answer_prompt` for the prompt construction
+        details. This is the non-streaming path; prefer
+        `stream_answer` for the chat UI.
+        """
         try:
-            context = ""
-
-            if context_files is None:
-                context_files = list(self.document_content.keys())
-
-            query_tokens = _tokenize(question)
-
-            for file_name in context_files:
-                if file_name not in self.document_content:
-                    continue
-                doc_info = self.document_content[file_name]
-                context += f"\n--- {file_name} ---\n"
-                context += f"File Type: {doc_info['file_type']}\n"
-                context += f"Summary: {doc_info['summary']}\n"
-
-                # Text-bearing file: BM25 over pre-chunked text.
-                chunks = self._chunks.get(file_name)
-                if chunks:
-                    if query_tokens:
-                        # Pre-tokenize each chunk once and score.
-                        tokenized = [_tokenize(c) for c in chunks]
-                        scores = _bm25_scores(query_tokens, tokenized)
-                        # Take the top-k by score, but preserve the
-                        # original chunk order so the model sees
-                        # document-coherent prose (not a shuffled salad).
-                        ranked = sorted(
-                            enumerate(scores), key=lambda x: x[1], reverse=True
-                        )[: self._CHUNKS_PER_DOC]
-                        ranked.sort(key=lambda x: x[0])  # back to doc order
-                        context += "Relevant excerpts (BM25-ranked):\n"
-                        for idx, _score in ranked:
-                            context += f"[chunk {idx}]\n{chunks[idx]}\n\n"
-                    else:
-                        # Question is empty / pure stopwords — fall back
-                        # to the first few chunks so the model still
-                        # has *some* context.
-                        context += "Content (first chunks):\n"
-                        for c in chunks[: self._CHUNKS_PER_DOC]:
-                            context += f"{c}\n\n"
-
-                # Structured data: keep the analysis summary.
-                if file_name in self.analysis_results:
-                    analysis = self.analysis_results[file_name]
-                    context += "Data Analysis Summary:\n"
-                    context += f"Shape: {analysis['basic_info']['shape']}\n"
-                    context += f"Columns: {analysis['basic_info']['columns']}\n"
-                    if analysis['summary_statistics']:
-                        context += (
-                            f"Key Statistics Available: "
-                            f"{list(analysis['summary_statistics'].keys())}\n"
-                        )
-
-            # Truncate the assembled context to the budget. We chop the
-            # tail (last file's chunks) rather than the head because
-            # the most-relevant chunks were the *first* ones we
-            # selected per file.
-            if len(context) > self._CONTEXT_BUDGET_CHARS:
-                context = context[: self._CONTEXT_BUDGET_CHARS] + "\n[...truncated for context budget...]"
-
-            # Create the prompt
-            prompt = f"""
-            You are an intelligent data analyst. Based on the following document(s) and analysis, please answer the user's question accurately and comprehensively.
-
-            CONTEXT FROM DOCUMENTS:
-            {context}
-
-            CONVERSATION HISTORY:
-            {self._format_conversation_history()}
-
-            USER QUESTION: {question}
-
-            Please provide a detailed answer based on the available data and documents. If the question involves specific data analysis, calculations, or comparisons, please be precise and cite relevant statistics or findings from the documents.
-
-            If you cannot answer the question based on the available information, please explain what additional information would be needed.
-            """
-
+            prompt = self._build_answer_prompt(question, context_files)
             answer = self._make_api_call_with_retry(prompt, max_tokens=1000)
 
             # Store in conversation history
@@ -1261,6 +1387,126 @@ class DocumentAnalystAgent:
 
         except Exception as e:
             return f"Error answering question: {str(e)}"
+
+    def stream_answer(
+        self,
+        question: str,
+        context_files: Optional[List[str]] = None,
+        max_retries: int = 3,
+    ) -> "Any":  # Iterator[str]  (sync wrapper around the async gen)
+        """Stream an answer token-by-token. Sync wrapper that drives
+        an asyncio event loop in a background thread so Streamlit
+        can consume the iterator with `st.write_stream`.
+
+        Context construction matches `answer_question` exactly, so a
+        stream and a non-stream call see the same prompt. When the
+        stream finishes, the concatenated text is appended to
+        `conversation_history` and the on-disk store, identical to
+        `answer_question`'s post-call side effects.
+
+        Errors during streaming are converted into a single
+        `Error answering question: <msg>` chunk so the UI never goes
+        blank mid-render.
+        """
+        try:
+            prompt = self._build_answer_prompt(question, context_files)
+        except Exception as e:
+            # Prompt construction is a sync function; surface the
+            # error in-band rather than letting st.write_stream hang
+            # on an empty generator.
+            yield f"Error answering question: {str(e)}"
+            return
+
+        # Pull user-tweakable settings from Streamlit session state.
+        max_tokens = 1000
+        temperature = 0.3
+        if _ST_AVAILABLE:
+            try:
+                if hasattr(st, "session_state"):
+                    max_tokens = getattr(st.session_state, "max_tokens", max_tokens)
+                    max_retries = getattr(st.session_state, "max_retries", max_retries)
+                    temperature = getattr(st.session_state, "temperature", 0.3)
+            except Exception:
+                pass
+
+        messages = [{"role": "user", "content": prompt}]
+
+        # Retry loop. We must surface partial tokens even on retry
+        # (Streamlit's spinner is gone by then), so the caller sees a
+        # single contiguous stream with no doubling: if attempt N
+        # fails, we drop its tokens and re-open attempt N+1.
+        last_error: Optional[str] = None
+        for attempt in range(max_retries):
+            try:
+                gen = _stream_chat_completion(
+                    api_key=self.api_key,
+                    model=self.model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                full = _collect_stream(gen)
+                # Persist + return the concatenated text as a single
+                # chunk. st.write_stream will treat it as one update.
+                self.conversation_history.append({
+                    "question": question,
+                    "answer": full,
+                    "context_files": context_files
+                        if context_files is not None
+                        else list(self.document_content.keys()),
+                })
+                self._store.append_conversation(
+                    question,
+                    full,
+                    context_files
+                        if context_files is not None
+                        else list(self.document_content.keys()),
+                )
+                if full:
+                    yield full
+                return
+            except Exception as e:
+                error_str = str(e)
+                last_error = error_str
+                if "429" in error_str or "rate limit" in error_str.lower():
+                    wait_time = (2 ** attempt) * 5
+                    if os.environ.get("STREAMLIT_RUN") != "1":
+                        print(
+                            f"Rate limit hit. Waiting {wait_time}s before "
+                            f"retry {attempt + 1}/{max_retries}..."
+                        )
+                    time.sleep(wait_time)
+                    if attempt == max_retries - 1:
+                        msg = (
+                            f"Rate limit exceeded. Please try again in a "
+                            f"few minutes. Error: {error_str}"
+                        )
+                        yield msg
+                        return
+                else:
+                    # Non-retryable error — surface to UI, persist as
+                    # the assistant reply, and stop.
+                    msg = f"API Error: {error_str}"
+                    self.conversation_history.append({
+                        "question": question,
+                        "answer": msg,
+                        "context_files": context_files
+                            if context_files is not None
+                            else list(self.document_content.keys()),
+                    })
+                    self._store.append_conversation(
+                        question,
+                        msg,
+                        context_files
+                            if context_files is not None
+                            else list(self.document_content.keys()),
+                    )
+                    yield msg
+                    return
+
+        # Exhausted retries without a clean return.
+        msg = f"Maximum retries exceeded. Last error: {last_error}"
+        yield msg
 
     def _format_conversation_history(self) -> str:
         """Format conversation history for context"""

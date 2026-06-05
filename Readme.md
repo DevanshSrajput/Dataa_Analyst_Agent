@@ -51,6 +51,7 @@ This Python-powered, AI-infused, theme-switching, sarcasm-enabled agent will:
 
 - **Read** your PDFs, DOCX, TXT, CSV, Excel (XLSX/XLS), and images (JPG, JPEG, PNG, TIFF, BMP — OCR, because why not?).
 - **Summarize** them via **OpenCode Zen** — OpenAI-compatible chat completions, with `minimax-m3-free` as the default model.
+- **Stream** answers back token-by-token via `st.write_stream` — first words in <1 s, full reply in 1–3 s.
 - **Analyze** your data with pandas wizardry (the Avengers of data science).
 - **Visualize** trends and patterns with auto-generated charts (because you love pretty colors).
 - **Chat** with your documents like they're your best friend (spoiler: they're more reliable).
@@ -140,6 +141,9 @@ via the v2.0 screenshots below.
 - **Context Awareness:** Remembers your conversation (better than most humans)
 - **Quick Questions:** Pre-built buttons for instant insights
 - **Smart Responses:** Powered by OpenCode Zen (OpenAI-compatible chat completions)
+- **Token-by-token streaming:** Answers render chunk-by-chunk via
+  `st.write_stream`, so the first words appear in <1 s instead of
+  waiting for the full 1–3 s completion
 
 ### 📊 **Analytics Tab**
 
@@ -215,7 +219,7 @@ If `streamlit` is on your `PATH` you can also do `python -m streamlit run app.py
 
 ## 🧪 Running the Tests
 
-The repo ships with a 35-test suite under `tests/` that covers extraction
+The repo ships with a 41-test suite under `tests/` that covers extraction
 failures, BM25 retrieval, the SSRF policy, the path-traversal-safe
 filename helper, and the extension allowlist. Run it with either:
 
@@ -257,7 +261,7 @@ Dataa_Analyst_Agent/
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py     # Shared fixtures (works under pytest OR unittest)
-│   └── test_agent.py   # 35 tests covering extraction, retrieval, SSRF, persistence, reset path
+│   └── test_agent.py   # 41 tests covering extraction, retrieval, SSRF, persistence, reset path, streaming
 └── venv/               # Local virtualenv (not committed)
 ```
 
@@ -521,12 +525,17 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 <details>
 <summary><h3 style="display:inline">Test coverage</h3></summary>
 
-- **35 tests** in `tests/test_agent.py` (zero new dependencies; runs
-  under stdlib `unittest` or `pytest`).
+- **41 tests** in `tests/test_agent.py` (one new optional dep:
+  `httpx`, used lazily for streaming; runs under stdlib `unittest` or
+  `pytest`).
 - Coverage: extension detection + allowlist, `_safe_filename` for
   path-traversal safety, `process_document` happy + failure paths,
   BM25 retrieval surfaces the right chunk, `safe_fetch_url` blocks
-  unsafe schemes + private IP ranges, BM25 ranker correctness.
+  unsafe schemes + private IP ranges, BM25 ranker correctness,
+  SQLite persistence across container recycle, Reset Session
+  handler (no mid-iteration `del`, wipes on-disk store), and
+  token-by-token streaming (SSE parser, error surfacing, full-text
+  persistence).
 - No network calls, no heavy-dep imports in the test path. Full
   suite finishes in ~100 ms.
 
@@ -538,7 +547,7 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 - `app.py` — Streamlit UI (the entrypoint for `streamlit run`).
 - `Agent.py` — engine: extractors, BM25 retriever, OpenCode Zen
   client, `safe_fetch_url` SSRF chokepoint.
-- `tests/` — 35 tests + shared fixtures (`conftest.py`).
+- `tests/` — 41 tests + shared fixtures (`conftest.py`).
 - `pyproject.toml` — `[tool.pytest.ini_options]` for the test suite.
 - `ISSUES.md` — personal-tracked audit; updated as each fix lands.
 - `.streamlit/config.toml` — Cloud-friendly defaults (port 8501, headless).
@@ -555,13 +564,19 @@ pass on top of that, plus the retrieval upgrade and a real test suite.
 5. **Blind [:4000] truncation** → BM25 retrieval over pre-chunked text
 6. **`visualizations_*` dirs in CWD** → in-memory bytes + `tempfile.gettempdir()`
 7. **Hardcoded extension list** → `Agent._SUPPORTED_EXTENSIONS` (single source of truth)
-8. **No tests** → 35-test suite under `tests/`
+8. **No tests** → 41-test suite under `tests/`
 9. **In-memory state lost on container recycle** → SQLite store under
    `tempfile.gettempdir()`, hydrated on init, write-through on every
    mutation. No new deps.
 10. **`del st.session_state[key]` mid-iteration in Reset Session** →
     `st.session_state.pop(key, None)` plus `agent.clear_caches()` +
     `agent.clear_visualizations()` so the on-disk store is wiped too.
+11. **Synchronous HTTP, no token-by-token feedback** → `httpx`
+    `AsyncClient.stream` + `st.write_stream` so the chat bubble
+    appears in <1 s and tokens arrive in place. The new
+    `stream_answer` mirrors `answer_question`'s side effects
+    (conversation history, on-disk store) so a streamed answer
+    and a non-streamed answer see the same persistence path.
 
 </details>
 
