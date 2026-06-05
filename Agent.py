@@ -439,6 +439,29 @@ def _bm25_scores(query_tokens: List[str], docs: List[List[str]],
 
 
 # ---------------------------------------------------------------------------
+# Supported file types
+# ---------------------------------------------------------------------------
+# Lowercase extensions, no leading dot. Single source of truth for
+# process_document and the file_uploader widget in app.py. Update both
+# in lockstep when adding a new type.
+_SUPPORTED_EXTENSIONS: frozenset = frozenset({
+    "pdf", "docx", "txt",
+    "csv", "xlsx", "xls",
+    "jpg", "jpeg", "png", "tiff", "bmp",
+})
+
+
+def _extension_of(name: str) -> str:
+    """Return the lowercase extension of `name` (no leading dot), or
+    '' if there is none. Uses os.path.splitext so multi-dot names like
+    'archive.tar.gz' return 'gz' (the actual final extension, which is
+    what the user means), and 'Report' returns '' (which the caller
+    can reject as unsupported)."""
+    _, ext = os.path.splitext(name or "")
+    return ext.lstrip(".").lower()
+
+
+# ---------------------------------------------------------------------------
 # DocumentAnalystAgent
 # ---------------------------------------------------------------------------
 
@@ -517,9 +540,10 @@ class DocumentAnalystAgent:
         """Load CSV / XLS / XLSX into a DataFrame. Raises on failure or
         unsupported format. Callers (process_document) should not swallow
         the result silently."""
-        if file_path.lower().endswith('.csv'):
+        ext = _extension_of(file_path)
+        if ext == "csv":
             return pd.read_csv(file_path)
-        if file_path.lower().endswith(('.xlsx', '.xls')):
+        if ext in ("xlsx", "xls"):
             return pd.read_excel(file_path)
         raise ValueError(f"Unsupported structured data format: {file_path}")
 
@@ -544,7 +568,12 @@ class DocumentAnalystAgent:
             Dictionary with `success: bool`, `error: str | None`, and
             on success: `content`, `data_frame`, `summary`, `file_type`.
         """
-        file_extension = file_name.lower().split('.')[-1]
+        # ISSUES.md #2 (extension detection): use os.path.splitext so
+        # 'archive.tar.gz' returns 'gz' (the actual final extension),
+        # 'Report' returns '' (rejected as unsupported), and 'report.PDF'
+        # returns 'pdf'. The allowlist short-circuit means we never
+        # call an extractor with an extension we know is wrong.
+        file_extension = _extension_of(file_name)
         result: Dict[str, Any] = {
             'file_name': file_name,
             'file_type': file_extension,
@@ -554,6 +583,12 @@ class DocumentAnalystAgent:
             'data_frame': None,
             'summary': '',
         }
+        if not file_extension or file_extension not in _SUPPORTED_EXTENSIONS:
+            result['error'] = (
+                f"Unsupported file type: {file_extension or '(none)'!r}. "
+                f"Supported: {', '.join(sorted(_SUPPORTED_EXTENSIONS))}."
+            )
+            return result
 
         try:
             if file_extension == 'pdf':
@@ -563,21 +598,19 @@ class DocumentAnalystAgent:
             elif file_extension == 'txt':
                 with open(file_path, 'r', encoding='utf-8') as f:
                     result['content'] = f.read()
-            elif file_extension in ['csv', 'xlsx', 'xls']:
+            elif file_extension in ('csv', 'xlsx', 'xls'):
                 df = self.load_structured_data(file_path)
                 result['data_frame'] = df
                 result['content'] = df.to_string()
                 self.data_frames[file_name] = df
-            elif file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']:
+            elif file_extension in ('jpg', 'jpeg', 'png', 'tiff', 'bmp'):
                 result['content'] = self.extract_text_from_image(file_path)
             else:
-                # Unknown extension — do NOT silently return an empty
-                # result that the UI will treat as success.
-                result['error'] = (
-                    f"Unsupported file type: {file_extension!r}. "
-                    f"Supported: pdf, docx, txt, csv, xlsx, xls, jpg, "
-                    f"jpeg, png, tiff, bmp."
-                )
+                # Should be unreachable now that the allowlist above
+                # ran first; keep as a defensive fallback in case the
+                # allowlist is later expanded without updating this
+                # branch.
+                result['error'] = f"Unsupported file type: {file_extension!r}"
                 return result
 
             # Extraction succeeded — store and summarise.
