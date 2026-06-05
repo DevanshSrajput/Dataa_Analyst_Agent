@@ -83,17 +83,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 ## 🟠 Correctness / data loss
 
-### 1. Truncation in chat context is lossy — `Agent.py:466, 483`
-- **Where:** `answer_question`: `content_preview = doc_info['content'][:1500]`
-  and `context[:4000]`.
-- **Issue:** 50-page PDF → only the first ~10 KB reaches the model. No
-  chunking, no embeddings, no retrieval.
-- **Fix:** out of scope for a first issue, but a great follow-up. RAG
-  over a vector store (e.g. `chromadb`) with sentence-transformer
-  embeddings, returning top-k chunks per question.
-- **Skill:** embeddings, RAG.
-
-### 2. `process_document` extension detection is fragile — `Agent.py:257`
+### 1. `process_document` extension detection is fragile — `Agent.py:257`
 - **Where:** `file_extension = file_name.lower().split('.')[-1]`.
 - **Issue:** a file named `archive.tar.gz` → extension `gz` (we don't
   support that). A file with no extension → `''` (silently no-op).
@@ -107,7 +97,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 ## 🟡 Reliability / robustness
 
-### 3. No tests — repo root
+### 2. No tests — repo root
 - **Issue:** no `tests/`, no `pytest`, no CI. Every change is a leap of
   faith.
 - **Fix:** add a small `tests/test_agent.py` covering `process_document`
@@ -116,7 +106,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
 - **Skill:** pytest, mocking.
 - **File:** new `tests/` directory.
 
-### 4. Add minimal test scaffolding — new file
+### 3. Add minimal test scaffolding — new file
 - **Fix:** add `pytest.ini` (or `pyproject.toml [tool.pytest.ini_options]`),
   `tests/__init__.py`, `tests/conftest.py` with a small CSV fixture,
   and `tests/test_agent.py` with at least one happy-path test for
@@ -125,14 +115,14 @@ knowing the whole codebase. Pick any of them as your first contribution.
 - **Skill:** pytest.
 - **File:** new `tests/`.
 
-### 5. In-memory state only — `Agent.py:188-191`
+### 4. In-memory state only — `Agent.py:188-191`
 - **Issue:** uploads, conversation history, analysis results live in
   `st.session_state` and on the agent instance. Refresh = total loss.
   Streamlit Cloud may recycle the container at any time.
 - **Fix:** SQLite-backed session or upload-to-S3 with a session id.
 - **Skill:** persistence, SQLite/S3.
 
-### 6. "Reset Session" deletes keys mid-render — `app.py:793-797`
+### 5. "Reset Session" deletes keys mid-render — `app.py:793-797`
 - **Where:** the loop `for key in list(st.session_state.keys()): del st.session_state[key]`
   then calls `st.rerun()`. Streamlit 1.30+ tolerates it, but earlier
   versions raise `RuntimeError: dictionary changed size during
@@ -146,7 +136,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 ## 🔵 Performance / scaling
 
-### 7. Synchronous HTTP from Streamlit — `Agent.py:144`
+### 6. Synchronous HTTP from Streamlit — `Agent.py:144`
 - **Issue:** a 1k-token completion takes 1–3 s synchronously. No
   streaming, no async. Streamlit reruns the whole script on every
   widget interaction, so the perceived latency compounds.
@@ -154,7 +144,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
   token-by-token rendering of chat responses.
 - **Skill:** async, streaming.
 
-### 8. `create_visualizations` always renders 4 charts — `Agent.py:332-415`
+### 7. `create_visualizations` always renders 4 charts — `Agent.py:332-415`
 - **Issue:** a 3-row CSV gets the full treatment including a
   correlation heatmap with a 1×1 matrix that seaborn happily renders
   and annotates. `numeric_columns` may also exceed 4 — only the first
@@ -163,7 +153,7 @@ knowing the whole codebase. Pick any of them as your first contribution.
   when truncating columns.
 - **Skill:** matplotlib, defensive UI.
 
-### 9. `df.to_string()` is stored in agent state — `Agent.py:277`
+### 8. `df.to_string()` is stored in agent state — `Agent.py:277`
 - **Issue:** a 100k-row CSV is converted to a 10 MB+ string and stored
   in `document_content`, then truncated to 1500 chars at Q&A time. The
   truncation hides the loss, but the memory cost is paid up front.
@@ -176,14 +166,14 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 ## ⚪ Style / maintainability
 
-### 10. `app.py` mixes UI, theming, business logic, and helpers
+### 9. `app.py` mixes UI, theming, business logic, and helpers
 - The 50-line CSS block (`DARK_CSS`, `LIGHT_CSS`) could live in a
   `theme.py` or in `static/`. The `_safe_filename` helper and
   `AVAILABLE_MODELS` dict could move to `app_helpers.py`. `app.py`
   would shrink to pure UI orchestration.
 - **Skill:** refactoring, separation of concerns.
 
-### 11. Model catalogue is hard-coded and partially fictional
+### 10. Model catalogue is hard-coded and partially fictional
 - `AVAILABLE_MODELS` in `app.py:66-127` lists `mimo-v2.5-free`,
   `qwen3.6-plus-free`, `deepseek-v4-flash-free`, `nemotron-3-ultra-free`,
   `gemini-3.1-pro`, `gpt-5`, `claude-sonnet-4-6`, `minimax-m2.7` —
@@ -199,17 +189,16 @@ knowing the whole codebase. Pick any of them as your first contribution.
 
 | # | Severity | Area | One-liner |
 |---|---|---|---|
-| 1 | 🟠 | Correctness | 1500-char truncation, no RAG |
-| 2 | 🟠 | Correctness | `split('.')[-1]` extension detection breaks on multi-dot / extensionless files |
-| 3 | 🟡 | Quality | No tests |
-| 4 | 🟡 | Quality | Add minimal pytest scaffolding |
-| 5 | 🟡 | State | All state is in `st.session_state` |
-| 6 | 🟡 | Stability | `del st.session_state[key]` mid-iteration |
-| 7 | 🔵 | UX | No streaming; every rerun re-pays latency |
-| 8 | 🔵 | Noise | Charts always render, even for 3-row data |
-| 9 | 🔵 | Memory | `df.to_string()` stored in agent state |
-| 10 | ⚪ | Structure | `app.py` still mixes UI + theming + helpers |
-| 11 | ⚪ | Data | Model catalogue may include fictional entries |
+| 1 | 🟠 | Correctness | `split('.')[-1]` extension detection breaks on multi-dot / extensionless files |
+| 2 | 🟡 | Quality | No tests |
+| 3 | 🟡 | Quality | Add minimal pytest scaffolding |
+| 4 | 🟡 | State | All state is in `st.session_state` |
+| 5 | 🟡 | Stability | `del st.session_state[key]` mid-iteration |
+| 6 | 🔵 | UX | No streaming; every rerun re-pays latency |
+| 7 | 🔵 | Noise | Charts always render, even for 3-row data |
+| 8 | 🔵 | Memory | `df.to_string()` stored in agent state |
+| 9 | ⚪ | Structure | `app.py` still mixes UI + theming + helpers |
+| 10 | ⚪ | Data | Model catalogue may include fictional entries |
 
 ---
 

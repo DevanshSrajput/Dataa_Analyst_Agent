@@ -350,8 +350,10 @@ def main() -> None:
                 agent.data_frames.clear()
                 agent.analysis_results.clear()
                 agent.conversation_history.clear()
-                # ISSUES.md #2: also free the per-agent temp viz dir
-                # and the in-memory bytes cache.
+                # ISSUES.md #2 + #1: free the per-agent temp viz dir,
+                # the in-memory viz bytes cache, AND the BM25 chunk
+                # cache so memory doesn't leak across resets.
+                agent.clear_caches()
                 agent.clear_visualizations()
                 st.success("✨ All files cleared!")
                 st.rerun()

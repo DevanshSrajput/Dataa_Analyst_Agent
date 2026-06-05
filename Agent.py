@@ -334,6 +334,111 @@ def _chat_complete(
 
 
 # ---------------------------------------------------------------------------
+# Retrieval helpers (ISSUES.md #1 — lossy context)
+# ---------------------------------------------------------------------------
+# Pure-stdlib BM25-lite ranker and a paragraph-aware chunker. We don't
+# pull in sentence-transformers or chromadb: the goal is "no more
+# blind [:4000] truncation", not full semantic RAG. Embedding-based
+# retrieval is a follow-up if/when it's worth the dep weight.
+
+
+# Words that carry almost no signal for retrieval. Lowercased.
+_BM25_STOPWORDS = frozenset("""
+a an and are as at be been being but by did do does for from had has
+have he her him his i if in into is it its just me my not of on or
+our she that the their them then there these they this to was we
+were what when where which while who why will with would you your
+""".split())
+
+
+def _tokenize(text: str) -> List[str]:
+    """Lowercase, split on non-alphanumerics, drop stopwords and short
+    tokens. Returns the token list used for BM25 scoring."""
+    import re as _re
+    tokens = _re.findall(r"[a-z0-9]+", text.lower())
+    return [t for t in tokens if t not in _BM25_STOPWORDS and len(t) > 1]
+
+
+def chunk_text(text: str, chunk_size: int = 800, overlap: int = 150) -> List[str]:
+    """Split `text` into ~`chunk_size`-character windows with `overlap`
+    characters of carry-over between consecutive chunks. Empty input
+    returns an empty list.
+
+    The chunker prefers paragraph boundaries: if a `\n\n` separator
+    falls within the last 20% of the window, we break there instead.
+    This keeps tables and list items intact when they fit.
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+    if len(text) <= chunk_size:
+        return [text]
+
+    chunks: List[str] = []
+    start = 0
+    n = len(text)
+    while start < n:
+        end = min(start + chunk_size, n)
+        if end < n:
+            # Try to break on a paragraph boundary near the end of the window.
+            lookback = text.rfind("\n\n", start, end)
+            if lookback != -1 and lookback > start + chunk_size // 2:
+                end = lookback
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        if end >= n:
+            break
+        start = max(end - overlap, start + 1)
+    return chunks
+
+
+def _bm25_scores(query_tokens: List[str], docs: List[List[str]],
+                 k1: float = 1.5, b: float = 0.75) -> List[float]:
+    """BM25-lite scoring. `docs` is a list of pre-tokenized documents.
+    Returns a score per doc. 0.0 means "no signal".
+
+    Pure stdlib — no numpy, no sklearn. Adequate for the corpus sizes
+    a single user will throw at a chat session (tens of chunks per doc,
+    maybe a few docs).
+    """
+    if not query_tokens or not docs:
+        return [0.0] * len(docs)
+    # Document frequencies for the query terms.
+    N = len(docs)
+    df: Dict[str, int] = {}
+    for d in docs:
+        seen = set(d)
+        for t in seen:
+            if t in query_tokens:
+                df[t] = df.get(t, 0) + 1
+    # Average doc length for length normalization.
+    avgdl = sum(len(d) for d in docs) / max(N, 1)
+    scores: List[float] = []
+    for d in docs:
+        if not d:
+            scores.append(0.0)
+            continue
+        dl = len(d)
+        norm = 1 - b + b * (dl / max(avgdl, 1))
+        # Term frequencies in this doc.
+        tf: Dict[str, int] = {}
+        for t in d:
+            tf[t] = tf.get(t, 0) + 1
+        score = 0.0
+        for q in query_tokens:
+            if q not in tf:
+                continue
+            n_q = df.get(q, 0)
+            # IDF — guard against 0/0 with +1 in the denominator.
+            idf = ((N - n_q + 0.5) / (n_q + 0.5) + 1)
+            # BM25 term contribution.
+            score += idf * (tf[q] * (k1 + 1)) / (tf[q] + k1 * norm)
+        scores.append(score)
+    return scores
+
+
+# ---------------------------------------------------------------------------
 # DocumentAnalystAgent
 # ---------------------------------------------------------------------------
 
@@ -373,6 +478,12 @@ class DocumentAnalystAgent:
         # subsequent reruns (analytics tab doesn't re-render the charts
         # every time, it just re-displays the cached bytes).
         self.visualizations: Dict[str, List[Tuple[str, bytes]]] = {}
+
+        # Per-file chunk cache: file_name -> list of pre-chunked text.
+        # Populated at `process_document` time so `answer_question` can
+        # score and pick top-k chunks per question without re-splitting
+        # the document on every chat turn. Cleared by `clear_caches`.
+        self._chunks: Dict[str, List[str]] = {}
 
         # Set up plotting style
         plt.style.use('default')
@@ -472,11 +583,18 @@ class DocumentAnalystAgent:
             # Extraction succeeded — store and summarise.
             result['success'] = True
             self.document_content[file_name] = result
+            # ISSUES.md #1: pre-chunk the text so answer_question can
+            # retrieve relevant chunks via BM25 instead of blind
+            # [:1500] / [:4000] truncation. Skip for structured data
+            # (DataFrames are summarized via analysis_results instead).
+            if file_extension not in ('csv', 'xlsx', 'xls'):
+                self._chunks[file_name] = chunk_text(result['content'])
             result['summary'] = self.generate_document_summary(result)
             return result
 
         except FileNotFoundError as e:
             result['error'] = f"File not found: {e}"
+            self._chunks.pop(file_name, None)
             return result
         except Exception as e:
             # Catch-all so the UI gets a clean signal, but log the full
@@ -486,6 +604,7 @@ class DocumentAnalystAgent:
             if os.environ.get("STREAMLIT_RUN") != "1":
                 traceback.print_exc()
             result['error'] = f"{type(e).__name__}: {e}"
+            self._chunks.pop(file_name, None)
             return result
 
     # ---- Analysis -----------------------------------------------------------
@@ -635,6 +754,24 @@ class DocumentAnalystAgent:
         os.makedirs(self._viz_dir, exist_ok=True)
         self.visualizations.clear()
 
+    def clear_caches(self) -> None:
+        """Wipe all per-file derived state (chunks + viz bytes).
+
+        Wired to the "Clear All Files" button in app.py so memory
+        doesn't leak across resets. Idempotent.
+        """
+        self._chunks.clear()
+        self.visualizations.clear()
+
+    def clear_caches(self) -> None:
+        """Wipe all per-file derived state (chunks + viz bytes).
+
+        Wired to the "Clear All Files" button in app.py so memory
+        doesn't leak across resets. Idempotent.
+        """
+        self._chunks.clear()
+        self.visualizations.clear()
+
     # ---- LLM interactions ---------------------------------------------------
 
     def generate_document_summary(self, document_info: Dict[str, Any]) -> str:
@@ -665,43 +802,99 @@ class DocumentAnalystAgent:
         except Exception as e:
             return f"Error generating summary: {str(e)}"
 
+    # How many top-scoring chunks to keep per text document when
+    # answering a question. Chosen so a 6-doc Q&A still fits well
+    # inside the per-call context budget below.
+    _CHUNKS_PER_DOC = 4
+    # Hard ceiling on the "CONTEXT FROM DOCUMENTS" block in the prompt.
+    # ~12k chars ≈ 3k tokens, leaves room for the question + history
+    # + the model's own reply inside the typical 4k-8k response window.
+    _CONTEXT_BUDGET_CHARS = 12_000
+
     def answer_question(self, question: str, context_files: Optional[List[str]] = None) -> str:
         """
         Answer a question based on the processed documents.
+
+        Context construction (ISSUES.md #1 — lossy context):
+        - For each text-bearing file (PDF/DOCX/TXT/images), the
+          pre-cached chunks from `self._chunks[file_name]` are scored
+          against the question with BM25; the top `_CHUNKS_PER_DOC`
+          chunks are concatenated into the prompt.
+        - For structured data (CSV/XLSX), we keep the existing
+          analysis-results summary (shape, columns, key statistics) —
+          the DataFrame is summarized, not chunked.
+        - The total context block is capped at `_CONTEXT_BUDGET_CHARS`
+          so we don't blow the model's input window. If the BM25
+          selection still overflows, we truncate the last chunk's tail
+          (gracefully — never silently drop the first chunks, which
+          are the most relevant).
         """
         try:
-            # Prepare context from documents
             context = ""
 
             if context_files is None:
                 context_files = list(self.document_content.keys())
 
+            query_tokens = _tokenize(question)
+
             for file_name in context_files:
-                if file_name in self.document_content:
-                    doc_info = self.document_content[file_name]
-                    context += f"\n--- {file_name} ---\n"
-                    context += f"File Type: {doc_info['file_type']}\n"
-                    context += f"Summary: {doc_info['summary']}\n"
+                if file_name not in self.document_content:
+                    continue
+                doc_info = self.document_content[file_name]
+                context += f"\n--- {file_name} ---\n"
+                context += f"File Type: {doc_info['file_type']}\n"
+                context += f"Summary: {doc_info['summary']}\n"
 
-                    # Add relevant content (truncated for API limits)
-                    content_preview = doc_info['content'][:1500]
-                    context += f"Content: {content_preview}\n"
+                # Text-bearing file: BM25 over pre-chunked text.
+                chunks = self._chunks.get(file_name)
+                if chunks:
+                    if query_tokens:
+                        # Pre-tokenize each chunk once and score.
+                        tokenized = [_tokenize(c) for c in chunks]
+                        scores = _bm25_scores(query_tokens, tokenized)
+                        # Take the top-k by score, but preserve the
+                        # original chunk order so the model sees
+                        # document-coherent prose (not a shuffled salad).
+                        ranked = sorted(
+                            enumerate(scores), key=lambda x: x[1], reverse=True
+                        )[: self._CHUNKS_PER_DOC]
+                        ranked.sort(key=lambda x: x[0])  # back to doc order
+                        context += "Relevant excerpts (BM25-ranked):\n"
+                        for idx, _score in ranked:
+                            context += f"[chunk {idx}]\n{chunks[idx]}\n\n"
+                    else:
+                        # Question is empty / pure stopwords — fall back
+                        # to the first few chunks so the model still
+                        # has *some* context.
+                        context += "Content (first chunks):\n"
+                        for c in chunks[: self._CHUNKS_PER_DOC]:
+                            context += f"{c}\n\n"
 
-                    # Add analysis results if available
-                    if file_name in self.analysis_results:
-                        analysis = self.analysis_results[file_name]
-                        context += f"Data Analysis Summary:\n"
-                        context += f"Shape: {analysis['basic_info']['shape']}\n"
-                        context += f"Columns: {analysis['basic_info']['columns']}\n"
-                        if analysis['summary_statistics']:
-                            context += f"Key Statistics Available: {list(analysis['summary_statistics'].keys())}\n"
+                # Structured data: keep the analysis summary.
+                if file_name in self.analysis_results:
+                    analysis = self.analysis_results[file_name]
+                    context += "Data Analysis Summary:\n"
+                    context += f"Shape: {analysis['basic_info']['shape']}\n"
+                    context += f"Columns: {analysis['basic_info']['columns']}\n"
+                    if analysis['summary_statistics']:
+                        context += (
+                            f"Key Statistics Available: "
+                            f"{list(analysis['summary_statistics'].keys())}\n"
+                        )
+
+            # Truncate the assembled context to the budget. We chop the
+            # tail (last file's chunks) rather than the head because
+            # the most-relevant chunks were the *first* ones we
+            # selected per file.
+            if len(context) > self._CONTEXT_BUDGET_CHARS:
+                context = context[: self._CONTEXT_BUDGET_CHARS] + "\n[...truncated for context budget...]"
 
             # Create the prompt
             prompt = f"""
             You are an intelligent data analyst. Based on the following document(s) and analysis, please answer the user's question accurately and comprehensively.
 
             CONTEXT FROM DOCUMENTS:
-            {context[:4000]}  # Limit context length
+            {context}
 
             CONVERSATION HISTORY:
             {self._format_conversation_history()}
