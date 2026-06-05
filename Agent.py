@@ -72,6 +72,12 @@ try:
     import docx
     from PIL import Image
     import pytesseract
+    # TODO(security ISSUES.md #3): if a "fetch URL as document" feature is
+    # ever added, do NOT pass user-supplied URLs straight to `requests`.
+    # Validate scheme (http/https only) and block private/loopback/link-local
+    # ranges: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+    # 169.254.0.0/16, ::1, fc00::/7. Resolve DNS first, then check the
+    # resolved IP (DNS-rebinding mitigation).
     import requests
 except ImportError as e:
     print(f"Error importing file processing libraries: {e}")
