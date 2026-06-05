@@ -1307,6 +1307,31 @@ class AppStructureTests(unittest.TestCase):
         self.assertIn("from app_helpers import", self.src)
         self.assertIn("from theme import", self.src)
 
+    def test_app_imports_agent_module_for_attribute_access(self):
+        # app.py:244 reads `Agent._SUPPORTED_EXTENSIONS` to derive the
+        # uploader accept-list. That requires the MODULE itself to be
+        # bound in app.py's namespace, not just symbols imported from
+        # it. A bare `from Agent import DocumentAnalystAgent, ...` does
+        # NOT bind `Agent` — the next refactor would have to remember
+        # to also add `import Agent` or this NameError will return.
+        # Lock the contract at the AST level.
+        import ast
+        tree = ast.parse(self.src)
+        has_module_import = any(
+            isinstance(node, ast.Import)
+            and any(alias.name == "Agent" for alias in node.names)
+            for node in ast.walk(tree)
+        )
+        self.assertTrue(
+            has_module_import,
+            "app.py must have a top-level `import Agent` (in addition "
+            "to `from Agent import …`) so that `Agent._SUPPORTED_EXTENSIONS` "
+            "and any other module-level attributes are reachable. "
+            "Without this, the uploader crashes with NameError on the "
+            "first streamlit run after a refactor that drops the "
+            "module binding.",
+        )
+
 
 class SecretsWiringTests(unittest.TestCase):
     """Lock the API-key resolution contract.

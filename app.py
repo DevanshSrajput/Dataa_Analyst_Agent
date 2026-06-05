@@ -22,6 +22,7 @@ import streamlit as st
 
 # Local import: Agent.py is the engine, this file is the UI.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import Agent  # noqa: E402  — module binding needed for `Agent._SUPPORTED_EXTENSIONS` in the uploader
 from Agent import DocumentAnalystAgent, _get_api_key, DEFAULT_MODEL  # noqa: E402
 
 # Re-exports: keep the legacy `from app import _safe_filename` import
