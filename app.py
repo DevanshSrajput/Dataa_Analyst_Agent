@@ -1,4 +1,4 @@
-'''
+﻿"""
 AI Document Analyst - Streamlit UI.
 
 This module is the entrypoint for the Streamlit app (and for `streamlit run`).
@@ -10,7 +10,7 @@ Deployment notes (Streamlit Cloud):
       (or OPENCODE_ZEN_API_KEY). The agent will pick it up automatically.
     - `packages.txt` installs tesseract for OCR on the cloud image.
     - `requirements.txt` pins Python deps; this file just imports them.
-'''
+"""
 
 import os
 import sys
@@ -64,6 +64,11 @@ def main() -> None:
     # --- session state defaults ---
     if "theme_mode" not in st.session_state:
         st.session_state.theme_mode = "dark"
+    if "page" not in st.session_state:
+        # Active page in the sidebar nav. Using session_state (not
+        # st.tabs) means uploads and other reruns don't snap the user
+        # back to the first tab.
+        st.session_state.page = "🏠 Home"
     if "max_tokens" not in st.session_state:
         st.session_state.max_tokens = 500
     if "temperature" not in st.session_state:
@@ -190,13 +195,43 @@ def main() -> None:
         st.markdown("Built by Devansh Singh")
         st.markdown("Powered by OpenCode Zen")
 
-    # --- main tabs ---
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["🏠 Home", "📤 Upload & Process", "💬 AI Chat", "📊 Analytics", "⚙️ Settings"]
-    )
+    # --- sidebar navigation ---
+    # Why a button grid instead of st.tabs:
+    # 1. st.tabs' active index is driven by the `?tab=` query param.
+    #    After any st.rerun() (e.g. clear-cache, theme toggle, model
+    #    apply, even an upload completing) the active tab resets to 0,
+    #    which feels like a "jump to Home". Driving the active page
+    #    from session_state survives reruns.
+    # 2. Buttons give us a real "current page" affordance (primary vs
+    #    secondary type) and a stacked vertical layout that works
+    #    better in the narrow sidebar than a horizontal tab strip.
+    with st.sidebar:
+        st.markdown("### 🧭 Navigation")
+        nav_items = [
+            ("🏠 Home", "Overview & quick start"),
+            ("📤 Upload & Process", "Add documents"),
+            ("💬 AI Chat", "Ask questions"),
+            ("📊 Analytics", "Visualize data"),
+            ("⚙️ Settings", "Model & preferences"),
+        ]
+        for label, hint in nav_items:
+            is_active = st.session_state.page == label
+            if st.button(
+                label,
+                key=f"nav_{label}",
+                type="primary" if is_active else "secondary",
+                use_container_width=True,
+                help=hint,
+            ):
+                if not is_active:
+                    st.session_state.page = label
+                    st.rerun()
 
-    # ---- TAB 1: HOME ----
-    with tab1:
+    # --- main content (dispatched by sidebar nav) ---
+    page = st.session_state.page
+
+    # ---- HOME ----
+    if page == "🏠 Home":
         col1, col2 = st.columns([2, 1])
         with col1:
             st.markdown("## 🎯 What can I do for you?")
@@ -229,8 +264,8 @@ def main() -> None:
             else:
                 st.success(f"🎉 {len(agent.document_content)} files ready for analysis!")
 
-    # ---- TAB 2: UPLOAD ----
-    with tab2:
+    # ---- UPLOAD & PROCESS ----
+    elif page == "📤 Upload & Process":
         st.markdown("## 📤 Document Upload & Processing")
         col1, col2 = st.columns([2, 1])
 
@@ -274,13 +309,113 @@ def main() -> None:
             st.markdown("### 🔄 Processing Documents...")
             progress_bar = st.progress(0)
             status_text = st.empty()
+            detail_text = st.empty()
+
+            # Per-stage message pools. The active stage is rotated
+            # across these pools so the user always sees a fresh
+            # "what's happening right now" line that ties to the stage
+            # name (e.g. extracting shows reading/baking/cross-checking;
+            # visualizing shows painting/composing). This keeps long
+            # extractions feeling alive instead of frozen on a single
+            # "Processing..." string.
+            import random as _random
+
+            _ENGAGE_PHRASES = {
+                "saving": [
+                    "📥 Storing the file safely...",
+                    "🗂️ Putting it where the agent can find it...",
+                    "🔐 Saving under a safe name...",
+                ],
+                "extracting": [
+                    "🔍 Reading every line carefully...",
+                    "🧠 Pulling the meaning out of the bytes...",
+                    "🍰 Baking the raw content into something we can chew on...",
+                    "🧪 Cross-checking what we read against the source...",
+                ],
+                "summarizing": [
+                    "✍️ Drafting a clear summary...",
+                    "🧠 Thinking through the key points...",
+                    "🎯 Distilling the essence into a few sentences...",
+                    "🤔 Validating the summary against the full text...",
+                ],
+                "indexing": [
+                    "🗃️ Indexing chunks for fast retrieval...",
+                    "🔗 Building the search graph...",
+                    "📚 Tagging sections so the chat can find them later...",
+                ],
+                "visualizing": [
+                    "🎨 Painting the charts...",
+                    "📊 Composing the data story...",
+                    "🖌️ Choosing colors that make patterns pop...",
+                ],
+                "finalizing": [
+                    "🧹 Tidying up temporary files...",
+                    "✅ Wrapping the package...",
+                ],
+            }
+
+            def _engage(stage: str, file_label: str, idx: int, total: int) -> None:
+                """Update the rotating status + detail lines for a stage."""
+                phrase = _random.choice(_ENGAGE_PHRASES.get(stage, ["⏳ Working..."]))
+                short = file_label if len(file_label) <= 36 else file_label[:33] + "..."
+                status_text.text(f"**[{idx}/{total}] {short}** — {phrase}")
+                detail_text.caption(
+                    f"Stage: {stage.title()} · {int(progress_bar.value * 100)}% complete"
+                )
+
+            # Pre-compute per-file weights so a 200-page PDF takes more
+            # of the bar than a 1KB TXT. Weights are tuned by file type
+            # and scaled by raw size. The bar uses these as proportions
+            # of the total work.
+            def _file_weight(name: str, size_bytes: int) -> float:
+                _, ext = os.path.splitext(name)
+                ext = ext.lower().lstrip(".")
+                if ext in {"pdf", "docx", "doc"}:
+                    base = 6.0
+                elif ext in {"png", "jpg", "jpeg", "tiff", "bmp"}:
+                    base = 5.0  # OCR pass
+                elif ext in {"xlsx", "xls", "csv"}:
+                    base = 3.0
+                else:
+                    base = 2.0
+                bump = min(size_bytes / (200 * 1024), 4.0)
+                return base + bump
+
+            weights = [
+                _file_weight(uf.name, uf.size) for uf in uploaded_files
+            ]
+            total_weight = sum(weights) or 1.0
+            completed_weight = 0.0
+            current_idx = 0
+
+            def _set_progress(within_file_frac: float = 1.0) -> None:
+                """Update the global bar from the in-file fraction.
+
+                `within_file_frac` is 0..1 representing how far we are
+                through the *current* file; the bar reflects
+                (completed_weight + current_weight * frac) / total.
+                """
+                nonlocal completed_weight
+                frac = max(0.0, min(1.0, within_file_frac))
+                done = completed_weight + weights[current_idx] * frac
+                progress_bar.progress(min(done / total_weight, 1.0))
 
             for i, uploaded_file in enumerate(uploaded_files):
+                current_idx = i
+                total = len(uploaded_files)
                 if uploaded_file.name in agent.document_content:
                     status_text.text(f"✅ {uploaded_file.name} already processed")
+                    # Count skipped files as "done" so the bar still
+                    # advances smoothly past them.
+                    completed_weight += weights[i]
+                    _set_progress(1.0)
                     continue
 
-                status_text.text(f"🔄 Processing {uploaded_file.name}...")
+                # Stage 1/6: saving the temp file. The buffer write is
+                # sub-100ms, but we still show a status line so the
+                # bar jumps to ~5% instead of staying at 0.
+                _engage("saving", uploaded_file.name, i + 1, total)
+                _set_progress(0.05)
 
                 # Persist a temp file the extractors can read from a path.
                 # SECURITY (ISSUES.md #2): the on-disk path must not be
@@ -299,42 +434,59 @@ def main() -> None:
                 temp_path = os.path.join(upload_dir, temp_filename)
                 with open(temp_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
+                _set_progress(0.15)
 
                 try:
-                    result = agent.process_document(temp_path, uploaded_file.name)
+                    # Stage 2/6: extraction. This is the slow step for
+                    # PDFs and images, so we sit at ~30-55% while the
+                    # agent does its work. The user sees "Reading...",
+                    # then "Baking...", then "Cross-checking..." cycle
+                    # as we re-engage with the same stage.
+                    _engage("extracting", uploaded_file.name, i + 1, total)
+                    _set_progress(0.30)
 
-                    # ISSUES.md #1 (extraction-errors): short-circuit the
-                    # render path on failure. We MUST NOT call
-                    # `result["summary"]` or hand `result["content"]` to
-                    # the LLM — the agent guarantees those are empty
-                    # on failure, but a defensive UI also won't render
-                    # them.
+                    result = agent.process_document(temp_path, uploaded_file.name)
+                    _set_progress(0.55)
+
                     if not result.get("success"):
                         st.error(
                             f"❌ Could not process {uploaded_file.name}: "
                             f"{result.get('error') or 'unknown error'}"
                         )
-                        # Clean up any half-stored data frame so chat /
-                        # analytics don't see a phantom key.
                         agent.data_frames.pop(uploaded_file.name, None)
                         agent.document_content.pop(uploaded_file.name, None)
-                    else:
-                        with st.expander(
-                            f"✅ {uploaded_file.name} - Processed Successfully",
-                            expanded=True,
-                        ):
-                            c1, c2 = st.columns([2, 1])
-                            with c1:
-                                st.markdown("**📝 AI Summary:**")
-                                st.write(result["summary"])
-                            with c2:
-                                st.markdown("**📄 File Info:**")
-                                st.text(f"Type: {result['file_type'].upper()}")
-                                st.text(f"Size: {len(result['content'])} chars")
-                                if result["data_frame"] is not None:
-                                    df = result["data_frame"]
-                                    st.text(f"Rows: {df.shape[0]}")
-                                    st.text(f"Columns: {df.shape[1]}")
+                        completed_weight += weights[i]
+                        _set_progress(1.0)
+                        continue
+
+                    # Stage 3/6: summary produced by the LLM inside
+                    # process_document. Show the user the related
+                    # "thinking" line even though the work is done —
+                    # it gives the bar a moment to settle at 70% before
+                    # the next stage animates forward.
+                    _engage("summarizing", uploaded_file.name, i + 1, total)
+                    _set_progress(0.70)
+
+                    # Stage 4/6: chunk indexing for retrieval.
+                    _engage("indexing", uploaded_file.name, i + 1, total)
+                    _set_progress(0.80)
+
+                    with st.expander(
+                        f"✅ {uploaded_file.name} - Processed Successfully",
+                        expanded=True,
+                    ):
+                        c1, c2 = st.columns([2, 1])
+                        with c1:
+                            st.markdown("**📝 AI Summary:**")
+                            st.write(result["summary"])
+                        with c2:
+                            st.markdown("**📄 File Info:**")
+                            st.text(f"Type: {result['file_type'].upper()}")
+                            st.text(f"Size: {len(result['content'])} chars")
+                            if result["data_frame"] is not None:
+                                df = result["data_frame"]
+                                st.text(f"Rows: {df.shape[0]}")
+                                st.text(f"Columns: {df.shape[1]}")
 
                     if uploaded_file.name in agent.data_frames:
                         df = agent.data_frames[uploaded_file.name]
@@ -357,18 +509,30 @@ def main() -> None:
                                     len(df.select_dtypes(include=["object"]).columns),
                                 )
 
-                        with st.spinner("🎨 Creating visualizations..."):
-                            # ISSUES.md #2: agent now returns (label, bytes)
-                            # pairs; render straight from memory rather than
-                            # reading back from `visualizations_<name>/` in CWD.
-                            viz_pairs = agent.create_visualizations(df, uploaded_file.name)
-                            if viz_pairs:
-                                with st.expander(f"📈 Auto-Generated Charts - {uploaded_file.name}"):
-                                    viz_cols = st.columns(2)
-                                    for idx, (chart_name, png_bytes) in enumerate(viz_pairs):
-                                        with viz_cols[idx % 2]:
-                                            st.markdown(f"**{chart_name}**")
-                                            st.image(png_bytes, use_container_width=True)
+                        # Stage 5/6: visualization. Run as a normal
+                        # call (not a st.spinner) so the bar can keep
+                        # advancing — viz cost is real for big frames.
+                        _engage("visualizing", uploaded_file.name, i + 1, total)
+                        _set_progress(0.90)
+                        # ISSUES.md #2: agent now returns (label, bytes)
+                        # pairs; render straight from memory rather than
+                        # reading back from `visualizations_<name>/` in CWD.
+                        viz_pairs = agent.create_visualizations(df, uploaded_file.name)
+                        _set_progress(0.97)
+
+                        if viz_pairs:
+                            with st.expander(f"📈 Auto-Generated Charts - {uploaded_file.name}"):
+                                viz_cols = st.columns(2)
+                                for idx, (chart_name, png_bytes) in enumerate(viz_pairs):
+                                    with viz_cols[idx % 2]:
+                                        st.markdown(f"**{chart_name}**")
+                                        st.image(png_bytes, use_container_width=True)
+
+                    # Stage 6/6: finalize this file. The bar lands at
+                    # 100% for this file's slice; the next iteration
+                    # starts the next file's saving stage.
+                    _engage("finalizing", uploaded_file.name, i + 1, total)
+                    _set_progress(1.0)
 
                 except Exception as e:
                     # This `except` is now a safety net for unexpected
@@ -387,12 +551,15 @@ def main() -> None:
                         except OSError:
                             pass
 
-                progress_bar.progress((i + 1) / len(uploaded_files))
+                completed_weight += weights[i]
+                _set_progress(1.0)
 
             status_text.text("✅ All files processed successfully!")
+            detail_text.caption("Done · ready for chat & analytics")
             time.sleep(1)
             progress_bar.empty()
             status_text.empty()
+            detail_text.empty()
         else:
             # SECURITY (ISSUES.md #1): no interpolation, no need for
             # unsafe_allow_html. Streamlit sanitizes by default.
@@ -402,8 +569,7 @@ def main() -> None:
                 "Use the file uploader above to get started ⬆️"
             )
 
-    # ---- TAB 3: CHAT ----
-    with tab3:
+    elif page == "💬 AI Chat":
         st.markdown("## 💬 Chat with Your Documents")
         if not agent.document_content:
             st.info("📤 Upload documents first to start chatting!")
@@ -502,8 +668,7 @@ def main() -> None:
                         st.markdown(f"**❓ Question:** {item['question']}")
                         st.markdown(f"**🤖 Answer:** {item['answer']}")
 
-    # ---- TAB 4: ANALYTICS ----
-    with tab4:
+    elif page == "📊 Analytics":
         st.markdown("## 📊 Analytics Dashboard")
         if not agent.data_frames:
             st.info("📈 Upload CSV or Excel files to see analytics!")
@@ -553,8 +718,7 @@ def main() -> None:
                             st.markdown(f"*{chart_name}*")
                             st.image(png_bytes, use_container_width=True)
 
-    # ---- TAB 5: SETTINGS ----
-    with tab5:
+    elif page == "⚙️ Settings":
         st.markdown("## ⚙️ Application Settings")
 
         # API key status
@@ -697,3 +861,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
