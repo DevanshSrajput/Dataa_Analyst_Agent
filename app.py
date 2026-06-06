@@ -14,6 +14,8 @@ Deployment notes (Streamlit Cloud):
 
 import os
 import sys
+import time
+import uuid
 
 # Mark this process as a Streamlit run so Agent.py stays quiet.
 os.environ["STREAMLIT_RUN"] = "1"
@@ -28,7 +30,7 @@ from Agent import DocumentAnalystAgent, _get_api_key, DEFAULT_MODEL  # noqa: E40
 # Re-exports: keep the legacy `from app import _safe_filename` import
 # path working for tests and any external callers, while the source of
 # truth lives in app_helpers.py / theme.py.
-from app_helpers import _safe_filename, _TEMP_UPLOAD_DIR  # noqa: E402
+from app_helpers import _safe_filename, _SAFE_FILENAME_RE, _TEMP_UPLOAD_DIR  # noqa: E402
 from app_helpers import AVAILABLE_MODELS, DEFAULT_MODEL_ID, list_model_choices  # noqa: E402
 from theme import css_for_theme  # noqa: E402
 
