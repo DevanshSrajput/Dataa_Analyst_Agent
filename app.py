@@ -70,7 +70,7 @@ def main() -> None:
         # back to the first tab.
         st.session_state.page = "🏠 Home"
     if "max_tokens" not in st.session_state:
-        st.session_state.max_tokens = 500
+        st.session_state.max_tokens = 3000
     if "temperature" not in st.session_state:
         st.session_state.temperature = 0.3
     if "max_retries" not in st.session_state:
@@ -723,9 +723,10 @@ def main() -> None:
 
         # API key status
         st.markdown("### 🔑 API Key")
-        st.success("✅ API key loaded") if api_key else st.error("❌ No API key found")
-        st.markdown(
-            "Keys are read in this order: `st.secrets → OPENCODE_API_KEY env var → TOGETHER_API_KEY env var`."
+        st.success("✅ Connected to OpenCode Zen") if api_key else st.error("❌ No API key found")
+        st.caption(
+            "Your key is already configured for this app. "
+            "You don't need to do anything here — just start uploading and chatting."
         )
 
         st.markdown("---")
@@ -789,7 +790,7 @@ def main() -> None:
         # Processing
         st.markdown("### 🎛️ Processing Settings")
         max_tokens = st.slider(
-            "Max Response Tokens:", 100, 2000, st.session_state.max_tokens, 50
+            "Max Response Tokens:", 100, 8000, st.session_state.max_tokens, 50
         )
         temperature = st.slider(
             "AI Creativity (Temperature):",
